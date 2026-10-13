@@ -1,0 +1,72 @@
+# Ambiente
+.env
+.env.*
+!.env.example
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+
+# AWS
+.aws/
+*.pem
+*.key
+credentials
+
+# Dados
+data/
+*.wav
+*.mp3
+*.mp4
+*.avi
+*.mov
+*.json.bak
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Node
+node_modules/
+dist/
+build/
+.expo/
+.expo-shared/
+
+# Blender
+*.blend1
+*.blend2
+
+# CDK
+cdk.out/
+.cdk.staging/
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+
+# Temporários
+tmp/
+temp/
