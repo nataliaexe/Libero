@@ -186,6 +186,14 @@ def test_propõe_samu_com_escore_alto_sem_executar():
     assert acao["status"] == "proposta_nao_executada"
 
 
+def test_camera_nao_e_proposta_sem_consentimento_explicito():
+    evento = {"detectado": True, "confianca": 0.95, "tipo": "queda"}
+
+    resultado = safety.agir(evento, {"nome": "Test"})
+
+    assert "ativar_camera" not in [acao["tipo"] for acao in resultado["acoes"]]
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

@@ -61,6 +61,18 @@ TERCEIROS = [
 ]
 
 
+def _match_palavra(texto, palavras):
+    """Match por palavra inteira (não substring)."""
+    if not texto:
+        return False
+    # Criar regex que exige palavra inteira
+    for p in palavras:
+        padrao = r'\b' + re.escape(p) + r'\b'
+        if re.search(padrao, texto, re.IGNORECASE):
+            return True
+    return False
+
+
 def _remover_acentos(texto):
     """Remove acentos para normalização."""
     if not texto:
@@ -157,7 +169,14 @@ def detectar_emergencia_contextual(texto):
                     continue
 
                 terceiro = _ocorrencia_de_terceiro(fragmento, ocorrencia)
-                fator = 0.2 if passado else 0.2 if terceiro else 1.0
+                sinal_pessoal_atual = palavra_norm in {
+                    "nao consigo levantar", "me machuquei",
+                }
+                fator = (
+                    0.2 if passado and not sinal_pessoal_atual
+                    else 0.2 if terceiro and not sinal_pessoal_atual
+                    else 1.0
+                )
                 peso_ajustado = peso * fator
                 razao = (
                     "Contexto de passado" if passado
@@ -230,11 +249,16 @@ def decidir_nivel(texto, hora=None, movimento=False):
     emergencia = detectar_emergencia_contextual(texto)
     if emergencia["nivel"] == Nivel.EMERGENCIA:
         return emergencia["nivel"]
-    
+
     texto_norm = _normalizar(texto)
-    
+    ajuda = _match_palavra(texto_norm, ["ajuda", "me ajuda", "me ajudem"])
+    if ajuda:
+        if re.search(r"\bme\s+ajuda\s*!+", texto_norm):
+            return Nivel.EMERGENCIA
+        return Nivel.INTERVENCAO
+
     # Confusão
-    if any(p in texto_norm for p in PALAVRAS_CONFUSAO):
+    if _match_palavra(texto_norm, PALAVRAS_CONFUSAO):
         return Nivel.INTERVENCAO
     
     # Madrugada + movimento
@@ -242,7 +266,7 @@ def decidir_nivel(texto, hora=None, movimento=False):
         return Nivel.INTERVENCAO
     
     # Solidão
-    if any(p in texto_norm for p in PALAVRAS_SOLIDAO):
+    if _match_palavra(texto_norm, PALAVRAS_SOLIDAO):
         return Nivel.CONVERSA
     
     # Conversa normal

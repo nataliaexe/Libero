@@ -313,7 +313,7 @@ async def camera_stream(request: Request):
     ):
         return JSONResponse({"error": "Ticket inválido ou expirado"}, status_code=401)
 
-    camera = get_camera()
+    camera = get_camera(camera_id=-1)
     return StreamingResponse(
         camera.gerar_mjpeg(),
         media_type="multipart/x-mixed-replace; boundary=frame"
@@ -329,7 +329,7 @@ async def camera_status(request: Request):
     except auth.AuthError as e:
         return JSONResponse({"error": str(e)}, status_code=401)
 
-    camera = get_camera()
+    camera = get_camera(camera_id=-1)
     return {
         "rodando": camera.rodando,
         "camera_id": camera.camera_id,
@@ -339,17 +339,21 @@ async def camera_status(request: Request):
 
 @app.post("/camera/start")
 async def camera_start(request: Request):
-    """Inicia a câmera."""
+    """Inicia modo placeholder (câmera é usada pelo edge em :8081)."""
     token = auth.extrair_token(request)
     try:
-        auth.autorizar("controlar_camera", token)
+        auth.autorizar("ativar_camera", token)
     except auth.AuthError as e:
         return JSONResponse({"error": str(e)}, status_code=401)
     
-    camera = get_camera()
-    camera.iniciar()
-    return {"status": "ok", "rodando": camera.rodando}
-
+    from cloud.mcp_server.camera import get_camera
+    camera = get_camera(camera_id=-1)
+    return {
+        "status": "ok",
+        "rodando": True,
+        "modo": "placeholder",
+        "edge_stream_url": "http://localhost:8081/stream"
+    }
 
 @app.post("/camera/stop")
 async def camera_stop(request: Request):
@@ -360,7 +364,7 @@ async def camera_stop(request: Request):
     except auth.AuthError as e:
         return JSONResponse({"error": str(e)}, status_code=401)
     
-    camera = get_camera()
+    camera = get_camera(camera_id=-1)
     camera.parar()
     return {"status": "ok", "rodando": camera.rodando}
 
@@ -460,7 +464,11 @@ async def enviar_mensagem(idoso_id: str, request: Request):
     store.adicionar_mensagem(idoso_id, "cuidador", texto)
     
     from cloud.agents import companion
-    resposta = companion.conversar(texto, {"nome": idoso_id})
+    mensagem_para_idoso = (
+        f"[Mensagem do cuidador] {texto}\n"
+        "Gere uma resposta que o idoso possa ouvir, considerando que veio do cuidador."
+    )
+    resposta = companion.conversar(mensagem_para_idoso, {"nome": idoso_id})
     
     store.adicionar_mensagem(idoso_id, "libero", resposta)
     
@@ -583,15 +591,10 @@ from cloud.mcp_server import audio as audio_ctrl
 
 
 @app.get("/audio/status")
-async def audio_status(request: Request):
-    """Status do microfone."""
-    token = auth.extrair_token(request)
-    try:
-        auth.autorizar("controlar_audio", token)
-    except auth.AuthError as e:
-        return JSONResponse({"error": str(e)}, status_code=401)
+async def audio_status():
+    """Status do microfone (público — só info de saúde do sistema)."""
+    from cloud.mcp_server import audio as audio_ctrl
     return audio_ctrl.status()
-
 
 @app.post("/audio/start")
 async def audio_start(request: Request):
@@ -706,6 +709,34 @@ async def remover_task(idoso_id: str, task_id: str, request: Request):
     return {"status": "ok"}
 
 
+# TESTE DE EMERGÊNCIA (para demonstrar)
+# ============================================================
+
+class TesteEmergenciaRequest(BaseModel):
+    idoso_id: str = "dona-maria"
+    evento: str = "queda"
+    local: str = "quarto"
+
+
+@app.post("/teste/emergencia")
+async def teste_emergencia(req: TesteEmergenciaRequest):
+    """Dispara emergência de teste (para demonstração)."""
+    from cloud.mcp_server.websocket import gerenciador_ws
+    from datetime import datetime, timezone
+    
+    await gerenciador_ws.broadcast({
+        "tipo": "emergencia",
+        "idoso_id": req.idoso_id,
+        "evento": req.evento,
+        "confianca": 0.95,
+        "local": req.local,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "texto": f"Emergência de teste: {req.evento}"
+    })
+    
+    return {"status": "ok", "enviado": True}
+
+
 if __name__ == "__main__":
     import uvicorn
     print(f"[Libero MCP] Iniciando em {MCP_HOST}:{MCP_PORT}")
@@ -715,3 +746,132 @@ if __name__ == "__main__":
         app, host=MCP_HOST, port=MCP_PORT,
         ws_max_size=65536, ws_max_queue=16, limit_concurrency=256,
     )
+
+
+# ============================================================
+# EVENTOS SONOROS E VISUAIS
+# ============================================================
+
+@app.get("/eventos/{idoso_id}")
+async def listar_eventos(idoso_id: str, request: Request, limite: int = 50):
+    """Lista eventos sonoros e visuais do idoso."""
+    token = auth.extrair_token(request)
+    try:
+        auth.autorizar("iniciar_conversa", token)
+    except auth.AuthError as e:
+        return JSONResponse({"error": str(e)}, status_code=401)
+    
+    from cloud.mcp_server.chat import get_store
+    store = get_store()
+    
+    # Filtrar mensagens do tipo sistema (eventos)
+    todas = store.listar_mensagens(idoso_id, limite=limite * 2)
+    eventos = [
+        m for m in todas
+        if m.get("tipo") in ["queda", "grito", "choro", "som_alto", "movimento", "emergencia", "sistema"]
+        or m.get("autor") == "sistema"
+    ]
+    
+    return {
+        "idoso_id": idoso_id,
+        "eventos": eventos[:limite],
+        "total": len(eventos)
+    }
+
+
+@app.get("/eventos/{idoso_id}/resumo")
+async def resumo_eventos(idoso_id: str, request: Request):
+    """Resumo dos eventos por tipo."""
+    token = auth.extrair_token(request)
+    try:
+        auth.autorizar("iniciar_conversa", token)
+    except auth.AuthError as e:
+        return JSONResponse({"error": str(e)}, status_code=401)
+    
+    from cloud.mcp_server.chat import get_store
+    store = get_store()
+    todas = store.listar_mensagens(idoso_id, limite=500)
+    
+    resumo = {
+        "quedas": 0,
+        "gritos": 0,
+        "choros": 0,
+        "sons_altos": 0,
+        "movimentos": 0,
+        "emergencias": 0,
+        "total": 0
+    }
+    
+    for m in todas:
+        tipo = m.get("tipo", "")
+        if tipo == "queda":
+            resumo["quedas"] += 1
+        elif tipo == "grito":
+            resumo["gritos"] += 1
+        elif tipo == "choro":
+            resumo["choros"] += 1
+        elif tipo == "som_alto":
+            resumo["sons_altos"] += 1
+        elif tipo == "movimento":
+            resumo["movimentos"] += 1
+        elif tipo == "emergencia":
+            resumo["emergencias"] += 1
+        if tipo in ["queda", "grito", "choro", "som_alto", "movimento", "emergencia"]:
+            resumo["total"] += 1
+    
+    return {"idoso_id": idoso_id, "resumo": resumo}
+
+
+# ============================================================
+# MICROFONE DO CUIDADOR (push-to-talk)
+# ============================================================
+
+@app.post("/audio/cuidador/enviar")
+async def audio_cuidador_enviar(request: Request):
+    """Cuidador envia mensagem de voz para o idoso."""
+    token = auth.extrair_token(request)
+    try:
+        auth.autorizar("iniciar_conversa", token)
+    except auth.AuthError as e:
+        return JSONResponse({"error": str(e)}, status_code=401)
+    
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    
+    texto = body.get("texto", "").strip()
+    idoso_id = body.get("idoso_id", "dona-maria")
+    
+    if not texto:
+        return JSONResponse({"error": "Texto vazio"}, status_code=400)
+    
+    # Salvar no chat como mensagem do cuidador
+    from cloud.mcp_server.chat import get_store
+    store = get_store()
+    store.adicionar_mensagem(
+        idoso_id, "cuidador", texto,
+        tipo="normal",
+        metadata={"canal": "voz_cuidador"}
+    )
+    
+    # Tentar falar no edge via WebSocket
+    try:
+        from cloud.mcp_server.websocket import gerenciador_ws
+        await gerenciador_ws.broadcast({
+            "tipo": "falar_no_idoso",
+            "texto": texto,
+            "idoso_id": idoso_id
+        })
+    except Exception as e:
+        print(f"[Libero] Erro ao enviar para o edge: {e}")
+    
+    return {
+        "status": "ok",
+        "texto": texto,
+        "idoso_id": idoso_id,
+        "canal": "cuidador"
+    }
+
+
+# ============================================================

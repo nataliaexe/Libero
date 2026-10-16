@@ -7,6 +7,9 @@ import os
 import sys
 import time
 import threading
+import re
+import tempfile
+import unicodedata
 import numpy as np
 import sounddevice as sd
 from datetime import datetime, timezone
@@ -33,13 +36,24 @@ except ImportError:
 SAMPLE_RATE = 16000
 CHANNELS = 1
 BLOCK_SIZE = 1024
-SILENCIO_MAX = 1.5
+SILENCIO_MAX = 3.0
+JANELA_MERGE_VOZ = 0.8
+LIMIAR_SOM_ALTO = 0.5  # energia para considerar som alto
+LIMIAR_GRITO = 0.7     # energia + zcr alto = grito    # era 1.5, agora 3.0 (Linux com PipeWire tem latência)
+MAX_THRESHOLD = 0.15   # não passar disso, mesmo com ruído
 
 # Filtros contra falso positivo
-DURACAO_MIN_FRASE = 1.2        # era 0.4-0.8, agora 1.2s
-ENERGIA_MIN_MEDIA = 0.06       # era 0.04, agora 0.06
-ENERGIA_MIN_MAX = 0.20         # pico mínimo
-BLOCOS_VOZ_MIN = 12            # era 8, agora 12 (~0.75s de fala contínua)
+DURACAO_MIN_FRASE = 0.5    # era 1.2, agora 0.5        # era 0.4-0.8, agora 1.2s
+ENERGIA_MIN_MEDIA = 0.03       # era 0.04, agora 0.06
+ENERGIA_MIN_MAX = 0.10         # pico mínimo
+# Palavras críticas que ignoram filtros (emergência)
+PALAVRAS_CRITICAS = [
+    "socorro", "ajuda", "ajudar", "cai", "caiu", "caí",
+    "me ajuda", "me ajudem", "dor", "machuquei", "sangue",
+    "quebrei", "nao consigo"
+]
+
+BLOCOS_VOZ_MIN = 3    # era 5, agora 3 (Linux picota muito)             # reduzido para ambientes com ruído
 SNR_MIN = 3.0                  # sinal/ruído mínimo
 
 
@@ -110,7 +124,7 @@ class Listener:
             0.08   # mínimo absoluto alto
         )
         
-        self.threshold = threshold_calculado
+        self.threshold = min(threshold_calculado, MAX_THRESHOLD)
         
         print(f"[Libero Listener] Ruído base: {self.ruido_base:.5f}")
         print(f"[Libero Listener] Pico ruído: {pico_ruido:.5f}")
@@ -173,66 +187,93 @@ class Listener:
         
         agora = time.time()
         
+        # Detectar som alto (mesmo sem fala)
+        if energia > LIMIAR_SOM_ALTO:
+            self._detectar_som_alto(energia)
+        
         if energia > self.threshold:
+            # Fecha somente depois da janela de união para preservar pausas curtas.
+            if self.buffer_audio and self.tempo_ultima_voz:
+                if (agora - self.tempo_ultima_voz) > JANELA_MERGE_VOZ:
+                    self._fechar_frase()
+            
             self.buffer_audio.append(bloco)
             self.tempo_ultima_voz = agora
             self.blocos_voz += 1
             self.energia_max_buffer = max(self.energia_max_buffer, energia)
         else:
+            # Blocos silenciosos mantêm a frase aberta durante a janela de união.
             if self.buffer_audio and self.tempo_ultima_voz:
-                if (agora - self.tempo_ultima_voz) > SILENCIO_MAX:
+                if (agora - self.tempo_ultima_voz) > JANELA_MERGE_VOZ:
                     self._fechar_frase()
     
+    def _tem_palavra_critica(self, texto):
+        """Verifica se o texto tem palavra crítica."""
+        if not texto:
+            return False
+        normalizado = unicodedata.normalize("NFKD", texto.lower())
+        normalizado = "".join(c for c in normalizado if not unicodedata.combining(c))
+        return any(
+            re.search(rf"(?<!\w){re.escape(p)}(?!\w)", normalizado)
+            for p in PALAVRAS_CRITICAS
+        )
+    
+    def _detectar_som_alto(self, energia):
+        """Detecta som alto e chama callback."""
+        if energia > LIMIAR_SOM_ALTO:
+            # Detectar se é grito (energia + frequência alta)
+            tipo = "grito" if energia > LIMIAR_GRITO else "som_alto"
+            
+            if self.callback:
+                self.callback({
+                    "tipo": "som_anomalo",
+                    "subtipo": tipo,
+                    "energia": energia,
+                    "timestamp": datetime.now(timezone.utc).isoformat()
+                })
+    
     def _fechar_frase(self):
-        """Fecha frase APENAS se passa pelos filtros."""
-        # FILTRO 1: blocos mínimos
-        if self.blocos_voz < BLOCOS_VOZ_MIN:
-            print(f"[Libero Listener] Ignorado: só {self.blocos_voz} blocos")
-            self._reset()
-            return
-        
+        """Transcreve fala energética antes de aplicar filtros de duração/blocos."""
         if not self.buffer_audio:
             self._reset()
             return
-        
+
         audio = np.concatenate(self.buffer_audio)
         duracao = len(audio) / SAMPLE_RATE
-        
-        # FILTRO 2: duração mínima
+        blocos = self.blocos_voz
+        self._reset()
+
+        energia_media = float(np.sqrt(np.mean(audio**2)))
+        if energia_media <= 0.15 and not self._passa_filtros(audio, duracao, blocos):
+            return
+
+        self._reset()
+        threading.Thread(
+            target=self._transcrever_e_emitir,
+            args=(audio, duracao, energia_media > 0.15, blocos),
+            daemon=True
+        ).start()
+
+    def _passa_filtros(self, audio, duracao, blocos):
+        if blocos < BLOCOS_VOZ_MIN:
+            print(f"[Libero Listener] Ignorado: só {blocos} blocos")
+            return False
         if duracao < DURACAO_MIN_FRASE:
             print(f"[Libero Listener] Ignorado: {duracao:.1f}s < {DURACAO_MIN_FRASE}s")
-            self._reset()
-            return
-        
-        # FILTRO 3: energia média
+            return False
         energia_media = float(np.sqrt(np.mean(audio**2)))
         if energia_media < ENERGIA_MIN_MEDIA:
             print(f"[Libero Listener] Ignorado: energia média {energia_media:.4f}")
-            self._reset()
-            return
-        
-        # FILTRO 4: pico mínimo
+            return False
         energia_max = float(np.max(np.abs(audio)))
         if energia_max < ENERGIA_MIN_MAX:
             print(f"[Libero Listener] Ignorado: pico {energia_max:.4f}")
-            self._reset()
-            return
-        
-        # FILTRO 5: SNR (sinal vs ruído)
+            return False
         snr = energia_media / max(self.ruido_base, 0.001)
         if snr < SNR_MIN:
             print(f"[Libero Listener] Ignorado: SNR {snr:.1f}")
-            self._reset()
-            return
-        
-        # PASSOU POR TODOS OS FILTROS
-        self._reset()
-        
-        threading.Thread(
-            target=self._transcrever_e_emitir,
-            args=(audio, duracao),
-            daemon=True
-        ).start()
+            return False
+        return True
     
     def _reset(self):
         self.buffer_audio = []
@@ -240,12 +281,17 @@ class Listener:
         self.blocos_voz = 0
         self.energia_max_buffer = 0.0
     
-    def _transcrever_e_emitir(self, audio, duracao):
+    def _transcrever_e_emitir(self, audio, duracao, validar_emergencia=False, blocos=0):
         try:
             texto = self._transcrever(audio)
             
-            if not texto or len(texto.strip()) < 3:
+            if not texto or len(texto.strip()) < 2:
                 return
+
+            palavra_critica = self._tem_palavra_critica(texto)
+            if validar_emergencia and not palavra_critica:
+                if not self._passa_filtros(audio, duracao, blocos):
+                    return
             
             # FILTRO 6: bloquear alucinações conhecidas do Whisper
             alucinacoes = [
@@ -266,6 +312,10 @@ class Listener:
             self.ultimo_timestamp = timestamp
             
             print(f"\n[Libero Listener] 🎤 '{texto}' ({duracao:.1f}s, SNR ok)")
+
+            energia_media = float(np.sqrt(np.mean(audio**2)))
+            energia_max = float(np.max(np.abs(audio)))
+            zcr = float(np.mean(np.abs(np.diff(np.sign(audio)))) / 2)
             
             if self.callback:
                 self.callback({
@@ -273,16 +323,21 @@ class Listener:
                     "texto": texto,
                     "duracao": duracao,
                     "timestamp": timestamp,
-                    "metodo": self.metodo_transcricao
+                    "metodo": self.metodo_transcricao,
+                    "energia_media": energia_media,
+                    "energia_max": energia_max,
+                    "zcr": zcr,
                 })
         except Exception as e:
             print(f"[Libero Listener] Erro: {e}")
     
     def _transcrever(self, audio):
-        tmp_path = "/tmp/libero_audio.wav"
-        write(tmp_path, SAMPLE_RATE, (audio * 32767).astype(np.int16))
-        
+        audio_int16 = (audio * 32767).astype(np.int16)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as arquivo:
+            tmp_path = arquivo.name
+
         try:
+            write(tmp_path, SAMPLE_RATE, audio_int16)
             if _groq:
                 try:
                     with open(tmp_path, "rb") as f:
@@ -309,7 +364,7 @@ class Listener:
         finally:
             try:
                 os.remove(tmp_path)
-            except Exception:
+            except FileNotFoundError:
                 pass
     
     def status(self):

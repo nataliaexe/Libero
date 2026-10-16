@@ -12,7 +12,9 @@ from cloud.mcp_server import tools
 
 def test_fluxo_completo_emergencia():
     """Testa fluxo de emergência."""
-    orq = Orquestrador("teste-1", {"nome": "Seu João"})
+    orq = Orquestrador(
+        "teste-1", {"nome": "Seu João", "camera_autorizada": True}
+    )
     
     resultado = orq.processar(
         "Socorro, caí!",

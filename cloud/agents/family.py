@@ -36,7 +36,7 @@ def _get_bedrock():
         try:
             _bedrock = boto3.client("bedrock-runtime", region_name=REGION)
         except Exception:
-            _bedrock = False
+            _bedrock = None
     return _bedrock
 
 

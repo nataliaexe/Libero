@@ -16,6 +16,12 @@ from edge.capture.stream import CameraLibero, MEDIAPIPE_DISPONIVEL
 from edge.output.speaker import falar
 from cloud.agents.orchestrator import Orquestrador
 from cloud.mcp_server import audio
+from cloud.mcp_server.chat import get_store
+from edge.camera_server import iniciar_camera_server, set_frame
+
+CONSENTIMENTO_CAMERA = os.getenv("LIBERO_CAMERA_CONSENT", "").strip().lower() in {
+    "1", "true", "yes", "sim"
+}
 
 
 # ============================================================
@@ -58,7 +64,7 @@ class Libero:
         self.contexto = {
             "nome": nome,
             "local": "casa",
-            "camera_autorizada": True
+            "camera_autorizada": CONSENTIMENTO_CAMERA
         }
         
         self.orquestrador = Orquestrador(idoso_id, self.contexto)
@@ -83,15 +89,25 @@ class Libero:
         self.listener.iniciar()
         audio.registrar_listener(self.listener)
         
-        # Câmera
-        try:
-            self.camera = CameraLibero(camera_id=0, callback=self._on_camera)
-            self.camera.iniciar()
-        except Exception as e:
-            print(f"[Libero] Câmera indisponível: {e}")
-            self.camera = None
+        # A câmera requer consentimento explícito; áudio funciona sem ela.
+        if CONSENTIMENTO_CAMERA:
+            try:
+                self.camera = CameraLibero(camera_id=0, callback=self._on_camera)
+                self.camera.iniciar()
+            except Exception as e:
+                print(f"[Libero] Câmera indisponível: {e}")
+                self.camera = None
+        else:
+            print("[Libero] Câmera desativada: consentimento não configurado")
         
         self.rodando = True
+        
+        # Iniciar servidor de câmera na porta 8081
+        try:
+            iniciar_camera_server(porta=8081)
+        except Exception as e:
+            print(f"[Libero] Erro ao iniciar servidor de câmera: {e}")
+        
         print("\n[Libero] ✓ Sistema rodando")
         print("[Libero] Cooldowns ativos: câmera=30s, fala=5s\n")
     
@@ -125,7 +141,10 @@ class Libero:
         threading.Thread(
             target=self._processar,
             args=(texto, {
-                "energia_rms": evento.get("energia", 0),
+                "energia_rms": evento.get("energia_media", evento.get("energia", 0)),
+                "energia_media": evento.get("energia_media", 0),
+                "energia_max": evento.get("energia_max", 0),
+                "zcr": evento.get("zcr", 0),
                 "duracao": evento.get("duracao", 0),
             }, {}),
             daemon=True
@@ -153,6 +172,13 @@ class Libero:
         
         print(f"\n[Câmera] {tipo} (confiança: {confianca:.2f})")
         
+        # Registrar evento sonoro/visual
+        self._registrar_evento_sonoro(
+            tipo=tipo,
+            texto=f"[{tipo.capitalize()}] detectado pela câmera",
+            metadata={"confianca": confianca, "origem": "camera"}
+        )
+        
         # Lock: se está falando, ignora
         if self.falando:
             return
@@ -170,6 +196,20 @@ class Libero:
             args=("", {}, features_visao),
             daemon=True
         ).start()
+    
+    def _registrar_evento_sonoro(self, tipo, texto, metadata=None):
+        """Registra evento sonoro no chat store."""
+        try:
+            store = get_store()
+            store.adicionar_mensagem(
+                self.idoso_id,
+                autor="sistema",
+                texto=texto or f"[{tipo}]",
+                tipo=tipo,
+                metadata=metadata or {}
+            )
+        except Exception as e:
+            print(f"[Libero] Erro ao registrar evento: {e}")
     
     def _processar(self, texto, features_audio, features_visao):
         """Processa uma entrada."""
@@ -207,17 +247,28 @@ class Libero:
             print(f"[Libero] Erro: {e}")
     
     def _falar_uma_vez(self, texto):
-        """Fala um texto, evitando múltiplas falas simultâneas."""
+        """Fala um texto, pausando o microfone durante a fala."""
         if self.falando:
             return
         
         self.falando = True
+        listener_pausado = False
         try:
+            if self.listener:
+                self.listener.pausar()
+                listener_pausado = True
+                time.sleep(0.4)
+            
             print(f"[Libero] 🔊 {texto}")
             falar(texto)
             self.ultima_resposta = texto
         finally:
-            self.falando = False
+            try:
+                if listener_pausado:
+                    time.sleep(0.4)
+                    self.listener.retomar()
+            finally:
+                self.falando = False
     
     def status(self):
         return {

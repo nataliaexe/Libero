@@ -33,14 +33,16 @@ def test_mensagem_enviada_pela_familia_tem_autor_cuidador(monkeypatch):
             self.mensagens.append(args)
 
     store = StoreFake()
+    mensagem_recebida = []
     monkeypatch.setattr(server.auth, "extrair_token", lambda request: "sessao")
     monkeypatch.setattr(server.auth, "autorizar_idoso", lambda *args: None)
     monkeypatch.setattr(server, "get_store", lambda: store)
     monkeypatch.setattr(
         "cloud.agents.companion.conversar",
-        lambda texto, contexto: "Que carinho bonito.",
+        lambda texto, contexto: mensagem_recebida.append(texto) or "Que carinho bonito.",
     )
 
     asyncio.run(server.enviar_mensagem("dona-maria", RequestFake()))
 
     assert store.mensagens[0][1:3] == ("cuidador", "Estou pensando em você.")
+    assert mensagem_recebida[0].startswith("[Mensagem do cuidador]")

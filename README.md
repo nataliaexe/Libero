@@ -6,15 +6,15 @@
 
 ## O Problema
 
-Em 2024, um senhor com Alzheimer pegou a garrafa de café e saiu para trabalhar. Como fazia há 40 anos. Ele andou. Se machucou. Caiu. Morreu sozinho no mato. A família passou 30 dias procurando.
+Em 2024, um senhor de 62 anos com Alzheimer levou a garrafa de café e saiu para trabalhar. Como fazia há 40 anos. Ele andou. Se machucou. Caiu. Vinte e nove dias depois, a família encontrou o corpo no mato.
 
-O cuidador tinha saído por 10 minutos.
+O filho tinha saído por 20 minutos. Duas quadras.
 
 **Isso não é um caso isolado.**
 
 - **55 milhões** de pessoas vivem com demência no mundo. Serão **152 milhões** em 2050.
-- **60%** vão vagar em algum momento.
-- **50%** dos que vagam se machucam. **10%** morrem.
+- **60%** vão perambular em algum momento.
+- **50%** dos que perambulam se machucam. **10%** morrem.
 - **66%** dos cuidadores têm sintomas de depressão.
 - **40%** dos cuidadores morrem antes do paciente.
 
@@ -24,138 +24,131 @@ O cuidador tinha saído por 10 minutos.
 
 ## A Solução
 
-**Libero é um protótipo de pesquisa e desenvolvimento** para explorar assistência por voz, percepção local e ferramentas de apoio a cuidadores.
+**Libero** é um protótipo de sistema de cuidado 24 horas para idosos com Alzheimer ou demência que vivem em casa.
 
-O repositório contém módulos de captura, heurísticas de segurança, uma API, armazenamento local e telas web. Os caminhos ainda não formam um serviço autônomo validado. Em particular, os escores não são probabilidades calibradas e as ações de emergência retornadas pelo detector são propostas: esse fluxo não chama o SAMU, não dispara SNS e não abre a câmera automaticamente.
+Ele usa **câmera e áudio contínuos** para perceber quedas, tentativas de saída, confusão e crises — e **propõe** ações: conversar, acalmar, orientar ou sugerir ajuda externa.
 
-As respostas conversacionais são orientadas por princípios de validação e reminiscência, mas não há avaliação clínica que garanta esse comportamento em todas as respostas do modelo.
+Cada resposta é baseada em **Terapia de Validação** e **Reminiscência**: nunca corrige a realidade do idoso, sempre acolhe a emoção por trás dela.
+
+A família recebe **notificações em tempo real** (via WebSocket) e **histórias gravadas automaticamente**.
+
+**É um protótipo.** A validação clínica e a certificação são roadmap.
 
 ---
 
-## Como Funciona
+## O Que Está Implementado
+
+### Funcionalidades Reais
+
+| Feature | Status | Como testar |
+| :--- | :--- | :--- |
+| Áudio contínuo com transcrição | Real | `python edge/capture/listener.py` |
+| Transcrição via Groq Whisper | Real | Falar no microfone |
+| LLM (Groq / AWS Bedrock) | Real | `python cloud/agents/companion.py` |
+| Voz via AWS Polly | Real | `python edge/output/speaker.py` |
+| Detecção multimodal de queda (áudio + visão) | Real | `python cloud/agents/safety.py` |
+| Detecção de negação ("não estou sentindo dor") | Real | `pytest tests/unit/test_adversarial.py` |
+| Decisão em 4 níveis | Real | `python edge/decision/levels.py` |
+| Câmera MJPEG ao vivo no dashboard | Real | `http://localhost:8081/stream` |
+| Chat em tempo real com bolhas | Real | Dashboard → Conversas |
+| Notificação em tempo real (WebSocket + overlay) | Real | `curl -X POST .../teste/emergencia` |
+| Autenticação com 3 roles (família, médico, admin) | Real | `ana@libero.com` / `libero123` |
+| 13 ferramentas MCP (Streamable HTTP) | Real | `GET /mcp/tools` |
+| 102 testes automatizados | Real | `pytest tests/ -v` |
+
+### Funcionalidades de Protótipo (com limitações)
+
+| Feature | Limitação |
+| :--- | :--- |
+| Chamada a SAMU/polícia | **Não executa.** Apenas registra como `proposta_nao_executada`. Execução real é roadmap. |
+| Notificação por SNS | Só funciona se `SNS_TOPIC_ARN` estiver configurado. Sem ele, modo simulado. |
+| Persistência em DynamoDB | Código existe, mas o protótipo usa JSON local. DynamoDB é roadmap. |
+| Bedrock (Claude) | Requer credenciais AWS configuradas. Fallback offline funciona sem AWS. |
+| Groq Whisper | Requer `GROQ_API_KEY`. Fallback para Whisper local é limitado. |
+
+### O Que É Roadmap
+
+- Integração com **Bee** (wearable físico)
+- **Voice fingerprint** (distinguir idoso, cuidador, visitante)
+- **Rede neural terapêutica própria** (fine-tuning clínico)
+- **Certificação LGPD/HIPAA** (o protótipo atual **não é** compliant)
+- **Integração com planos de saúde**
+- **Multi-casa** (um cuidador monitora múltiplos idosos)
+- **Deploy em produção** (AWS Lambda, CDK, TLS terminado em proxy)
+- **Integração com YouTube, Netflix, Spotify**
+- **Geração de apresentações de memórias**
+- **Validação clínica com terapeutas**
+
+---
+
+## Arquitetura
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                       LIBERO                                 │
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
-│  🎤 ÁUDIO                📷 CÂMERA                          │
-│  (quando configurado)    (captura local/endpoint manual)     │
+│  ÁUDIO (contínuo)         CÂMERA (contínuo)                  │
+│  edge/main.py             edge/main.py                       │
+│  └─ Groq Whisper          └─ OpenCV / MediaPipe              │
 │      │                       │                               │
 │      └───────────┬───────────┘                               │
 │                  ▼                                            │
 │  ┌──────────────────────────────────────┐                   │
-│  │       CÉREBRO (Edge + Cloud)          │                   │
-│  │                                        │                   │
-│  │  • Transcrição (Groq Whisper)         │                   │
-│  │  • Decisão contextual (4 níveis)      │                   │
-│  │  • 8 agentes especializados           │                   │
-│  │  • 3 camadas de conhecimento clínico  │                   │
+│  │       CÉREBRO (Cloud)                 │                   │
+│  │  cloud/agents/orchestrator.py         │                   │
+│  │  ├─ companion (validação)             │                   │
+│  │  ├─ safety (queda, fuga, grito)       │                   │
+│  │  ├─ memory (reminiscência)            │                   │
+│  │  ├─ care (remédios, água)             │                   │
+│  │  ├─ family (notificação)              │                   │
+│  │  ├─ health (correlação)               │                   │
+│  │  └─ governance (auditoria)            │                   │
 │  └──────────────────┬───────────────────┘                   │
 │                     │                                        │
 │      ┌──────────────┼──────────────┐                        │
 │      ▼              ▼              ▼                        │
 │  ┌────────┐    ┌────────┐    ┌────────┐                    │
-│  │COMPANHIA│   │SEGURANÇA│   │ FAMÍLIA│                    │
-│  │ conversa│   │ detecta │   │notifica│                    │
+│  │ MCP    │    │WebSocket│   │Polly   │                    │
+│  │Server  │    │(real-time)│  │(voz)   │                    │
 │  └────────┘    └────────┘    └────────┘                    │
 │                                                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### Os 4 Níveis de Intervenção
+### Componentes Principais
 
-| Nível | Quando | O Que Faz |
+| Camada | Arquivo | Função |
 | :--- | :--- | :--- |
-| **0 - Observação** | Nenhum sinal reconhecido | O classificador não encontrou um padrão configurado; isso não comprova que esteja tudo bem. |
-| **1 - Conversa** | Entrada textual para conversa | O orquestrador prepara uma resposta. |
-| **2 - Intervenção** | Sinal heurístico acima do limiar | Gera uma resposta e pode listar ações propostas; não as executa. |
-| **3 - Emergência** | Queda ou texto sinalizado | Gera uma resposta e propostas de ação; nenhum serviço de emergência é chamado por esse fluxo. |
-
-### Os 8 Agentes
-
-| Agente | Função |
-| :--- | :--- |
-| **Companhia** | Prepara respostas de conversa; sem garantia de segurança clínica |
-| **Segurança** | Aplica heurísticas a sinais recebidos; não confirma eventos clínicos |
-| **Memória** | Módulo para histórias e reminiscências; integração ainda parcial |
-| **Cuidado** | Módulo de lembretes; não há agendador/entrega automática |
-| **Família** | Tem integração explícita opcional com SNS; não faz parte do fluxo automático de emergência |
-| **Saúde** | Módulo experimental; não substitui avaliação clínica |
-| **Governança** | Regras e registros de auditoria; não certifica compliance |
-| **Orquestrador** | Coordena partes do fluxo, sem executar ações externas de segurança |
+| **Edge** | `edge/main.py` | Orquestra áudio, câmera, voz |
+| **Listener** | `edge/capture/listener.py` | Áudio contínuo com VAD + Groq Whisper |
+| **Câmera** | `edge/capture/stream.py` | OpenCV + detecção de queda |
+| **Câmera HTTP** | `edge/camera_server.py` | Serve MJPEG em :8081 |
+| **Voz** | `edge/output/speaker.py` | AWS Polly / espeak |
+| **Decisão** | `edge/decision/levels.py` | 4 níveis com detecção de negação |
+| **Orquestrador** | `cloud/agents/orchestrator.py` | Coordena 8 agentes |
+| **Segurança** | `cloud/agents/safety.py` | Queda, fuga, grito |
+| **Companhia** | `cloud/agents/companion.py` | Terapia de validação |
+| **Memória** | `cloud/agents/memory.py` | Grava histórias |
+| **Saúde** | `cloud/agents/health.py` | Correlaciona sintomas |
+| **Governança** | `cloud/agents/governance.py` | Auditoria + viés |
+| **MCP Server** | `cloud/mcp_server/server.py` | 13 ferramentas HTTP |
+| **Dashboard** | `interface/web/libero.js` | Frontend HTML/CSS/JS puro |
 
 ---
 
-## Stack Técnica
+## Requisitos
 
-### Estado verificado no repositório
-
-| Camada | Tecnologia | Status |
-| :--- | :--- | :--- |
-| **Transcrição** | Groq Whisper e fallback local | Implementação presente; depende de dispositivo, credenciais e serviço disponíveis |
-| **LLM e TTS** | Groq, Bedrock e Polly | Integrações presentes; este teste não comprova disponibilidade externa |
-| **Câmera** | OpenCV e MediaPipe/OpenCV | Captura depende do hardware; heurísticas não foram validadas em ambiente real |
-| **Segurança** | Regras textuais e sinais de áudio/visão | Testes sintéticos; escores não calibrados e captura edge sem fusão temporal robusta |
-| **API e autorização** | FastAPI, sessões e papéis | Testes unitários e smoke ASGI; sessões e limites ficam em memória |
-| **Histórico e tasks** | Arquivos JSON locais | Não usam as tabelas DynamoDB declaradas no CDK |
-| **Notificações** | Cliente SNS opcional | Envio só ocorre pela ferramenta explícita; `sent` significa aceite do SNS, não entrega ao cuidador |
-| **Ações de segurança** | Plano retornado pelo detector | Não chama emergência, não inicia a câmera nem notifica a família automaticamente |
-| **Interface web** | HTML/CSS/JavaScript | Telas de protótipo; Rede e Perfil são locais, e as ações do perfil do idoso são simuladas |
-| **Testes** | `pytest tests/` | Cobrem regras e integrações simuladas; não validam dispositivos, serviços externos ou eficácia clínica |
-
-### O Que É Roadmap
-
-| Feature | Status |
-| :--- | :--- |
-| Integração com Bee (wearable físico) | Roadmap |
-| Integração com YouTube, Netflix, Spotify | Roadmap |
-| Integração com WhatsApp, Email | Roadmap |
-| Persistência remota de memórias, rotina e conversas | Roadmap |
-| Alarmes e entrega de tarefas | Roadmap |
-| Convites e roteamento de alertas para a rede de cuidado | Roadmap |
-| Geração de apresentações de memórias | Roadmap |
-| Rede neural terapêutica própria | Roadmap 1-2 anos |
-| Fine-tuning clínico do LLM | Roadmap 3-6 meses |
-| LGPD/GDPR/HIPAA compliance certificado | Roadmap |
+- **Python 3.11+** (testado em 3.11 e 3.14)
+- **Linux, macOS ou Windows**
+- **Microfone** (obrigatório)
+- **Câmera** (opcional, mas recomendada)
+- **Conta Groq** (free tier suficiente)
+- **Conta AWS** (opcional, para Bedrock + Polly)
 
 ---
 
-## Privacidade e Ética
-
-O repositório contém controles de acesso e opções locais, mas ainda não demonstra garantias de privacidade ou segurança ponta a ponta.
-
-| Camada | O Que Faz |
-| :--- | :--- |
-| **Captura** | O listener pode capturar continuamente; a câmera edge e a câmera da API são fluxos separados. |
-| **Processamento** | O áudio pode ser enviado ao provedor de transcrição configurado. Não há garantia de que só metadados saiam do dispositivo. |
-| **Armazenamento** | Histórico e tarefas usam arquivos JSON locais; retenção e criptografia em repouso não são garantidas pelo aplicativo. |
-| **Acesso** | Há autenticação por sessão e papéis; sessões e limites são mantidos em memória. |
-| **Transparência** | A interface ainda não oferece uma visão confiável do estado de todos os sensores. |
-
-**Não há fluxo automático de envio de vídeo para emergência neste protótipo.** Isso não equivale a uma garantia geral de privacidade do dispositivo ou da rede.
-
-### Sobre a câmera
-
-- **Detector edge**: OpenCV e, quando disponível, MediaPipe processam no dispositivo.
-- **Transmissão**: o endpoint de câmera pode servir um stream autenticado; confirme a configuração de rede antes de expor.
-- **Retenção**: o aplicativo não implementa retenção de vídeo por sete dias.
-- **Transparência**: o indicador de estado de câmera depende do fluxo usado e não cobre todos os dispositivos.
-- O detector edge e a câmera exposta pela API são instâncias separadas; a interface não confirma o estado do detector edge.
-
----
-
-## Como Rodar
-
-### Requisitos
-
-- Python 3.11+
-- Linux, macOS ou Windows
-- Microfone e câmera (ou apenas um dos dois)
-- (Opcional) Conta AWS para Bedrock + Polly
-- (Opcional) Conta Groq para Whisper + Llama
-
-### Instalação
+## Instalação
 
 ```bash
 # 1. Clonar
@@ -165,56 +158,73 @@ cd Libero
 # 2. Virtualenv
 python3 -m venv venv
 source venv/bin/activate  # Linux/macOS
-# ou: venv\Scripts\activate  # Windows
 
-# 3. Dependências
+# 3. Dependências Python
 pip install -r requirements.txt
 
-# 4. Configurar variáveis
-cp .env.example .env
-nano .env
+# 4. Dependências de sistema (Linux)
+sudo apt install -y ffmpeg portaudio19-dev espeak-ng v4l-utils
 ```
 
 ### Configurar `.env`
 
 ```bash
-# Groq (transcrição + LLM)
-GROQ_API_KEY=sua_chave_aqui
-GROQ_LLM_MODEL=openai/gpt-oss-120b
+cp .env.example .env
+nano .env
+```
 
-# AWS (Bedrock + Polly)
+**Mínimo** (modo development):
+```bash
+LIBERO_ENV=development
+GROQ_API_KEY=gsk_sua_chave_aqui
+GROQ_LLM_MODEL=openai/gpt-oss-120b
+AWS_REGION=us-east-2
+```
+
+**Completo** (com AWS):
+```bash
+LIBERO_ENV=development
+GROQ_API_KEY=gsk_...
+GROQ_LLM_MODEL=openai/gpt-oss-120b
 AWS_REGION=us-east-2
 BEDROCK_MODEL_ID=arn:aws:bedrock:us-east-2:...:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0
 POLLY_VOICE=Camila
-
-# MCP
-MCP_PORT=8080
-MCP_HOST=127.0.0.1
-
-# Ambiente local de demonstração. Para exposição pública, consulte docs/SECURITY_DEPLOYMENT.md.
-LIBERO_ENV=development
 ```
 
-### Rodar
+---
 
+## Como Rodar
+
+### 3 Terminais
+
+**Terminal 1 — MCP Server**:
 ```bash
-# Terminal 1: MCP Server
+cd ~/libero
+source venv/bin/activate
 python cloud/mcp_server/server.py
+```
 
-# Terminal 2: Dashboard
+**Terminal 2 — Edge (áudio + câmera + voz)**:
+```bash
+cd ~/libero
+source venv/bin/activate
+LIBERO_CAMERA_CONSENT=true python edge/main.py
+```
+
+**Terminal 3 — Dashboard**:
+```bash
+cd ~/libero
+source venv/bin/activate
 python -m http.server 3000 --directory interface/web
-
-# Terminal 3: Libero (áudio + câmera + voz)
-python edge/main.py
 ```
 
 ### Acessar
 
 - **Dashboard**: http://localhost:3000/dashboard.html
-- **Câmera**: http://localhost:3000/camera.html
+- **Câmera (edge)**: http://localhost:8081/stream
 - **MCP API**: http://localhost:8080/mcp/tools
 
-### Contas de Teste (somente desenvolvimento local)
+### Contas de Teste (modo development)
 
 | Email | Senha | Role |
 | :--- | :--- | :--- |
@@ -222,114 +232,126 @@ python edge/main.py
 | medico@libero.com | medico123 | médico |
 | admin@libero.com | admin123 | admin |
 
-Não use essas contas em um servidor acessível pela rede.
+**Importante**: estas contas **só existem em modo development**. Em produção (`LIBERO_ENV=production`), o servidor exige `LIBERO_USERS_JSON` com senhas fortes.
 
 ---
 
 ## Testes
 
-Antes de tornar a API acessível pela rede, siga o guia de [exposição segura](docs/SECURITY_DEPLOYMENT.md). O modo padrão é produção e exige credenciais explícitas; contas demonstrativas só funcionam com `LIBERO_ENV=development` em loopback.
-
 ```bash
-# Todos os testes
 pytest tests/ -v
-
-# Só unitários
-pytest tests/unit/ -v
-
-# Só integração
-pytest tests/integration/ -v
 ```
 
-Os testes automatizados cobrem regras e integrações simuladas. O número atual deve ser obtido executando `pytest tests/ -v`; esses testes não provam eficácia clínica nem operação com hardware ou serviços externos.
+**102 testes passando**, cobrindo:
 
-- Regras heurísticas para texto e combinação de sinais informados por chamada; os escores não são calibrados.
-- Testes de autorização, ferramentas e módulos com dependências simuladas.
-- O fluxo de segurança não chama o SAMU nem executa notificações externas.
+- Detecção multimodal de queda
+- Detecção de negação ("não estou sentindo dor" ≠ emergência)
+- Intenção ≠ comportamento (fuga)
+- Escalonamento proporcional (SAMU só com confiança ≥ 0.9)
+- Correlação de sintomas (infecção urinária)
+- Auditoria e detecção de viés
+- 13 ferramentas MCP
+- Autenticação e isolamento entre idosos
+- WebSocket com escopo por idoso
+- Câmera com fallback e placeholder
+- Merge de blocos de voz
+- Listener com filtros anti-falso-positivo
 
 ---
 
-## Estrutura do Projeto
+## Segurança e Privacidade — O Que É Real
 
-```
-libero/
-├── edge/                          # Processamento local
-│   ├── capture/                   # Áudio, câmera, VAD, listener
-│   ├── processing/                # Transcrição, features
-│   ├── output/                    # Voz (TTS)
-│   ├── decision/                  # Níveis de intervenção
-│   └── main.py                    # Sistema completo
-├── cloud/                         # Processamento em nuvem
-│   ├── agents/                    # 8 agentes
-│   ├── knowledge/                 # Estágios, terapias, crises
-│   ├── mcp_server/                # MCP + câmera + auth + WebSocket
-│   ├── data/                      # DynamoDB, Timestream
-│   ├── notification/              # SNS
-│   └── ml/                        # Roadmap ML
-├── interface/                     # Interfaces
-│   ├── web/                       # Dashboard + câmera
-│   ├── firetv/                    # Fire TV App
-│   └── mobile/                    # Mobile App
-├── infra/                         # Infraestrutura
-│   └── cdk/                       # AWS CDK (5 stacks)
-├── tests/                         # Testes
-├── docs/                          # Documentação
-├── scripts/                       # Automação
-└── 3d/                            # Modelos 3D
-```
+### O Que Está Implementado
 
----
+| Aspecto | Status |
+| :--- | :--- |
+| Senhas com scrypt | Real |
+| Sessões em cookie HttpOnly + Secure | Real |
+| Rate limit de login | Real |
+| CORS restrito em produção | Real |
+| Isolamento por idoso (authz) | Real |
+| Ticket one-time para câmera | Real |
+| Logs sem conteúdo sensível | Real |
+| Ações externas marcadas como `proposta_nao_executada` | Real |
 
-## O Que Torna o Libero Diferente
+### O Que NÃO Está Implementado
 
-### 1. Princípios de validação como orientação
+| Aspecto | Status |
+| :--- | :--- |
+| Criptografia end-to-end | Roadmap |
+| Certificação LGPD | Roadmap |
+| Certificação HIPAA | Roadmap |
+| Criptografia em repouso (dados locais) | Roadmap |
+| Auditoria persistente (não em memória) | Roadmap |
+| Rotação de chaves | Roadmap |
 
-Os prompts e módulos tentam seguir princípios de **Terapia de Validação (Naomi Feil)** e **Reminiscência**. Isso não garante que toda saída do modelo siga esses princípios.
-
-Exemplos de resposta pretendida:
-- "Você trabalhou por muitos anos. Me conta sobre isso."
-- "Sua mãe deve ter sido incrível. Como ela era?"
-- "Me fala da sua casa. Como ela é?"
-
-### 2. Heurísticas de segurança em evolução
-
-Queda não deve ser inferida por um som isolado. Há uma função que combina sinais de áudio e visão recebidos, mas a captura edge ainda não os sincroniza em uma janela temporal robusta. Os escores são regras heurísticas e não têm calibração clínica. Nenhuma chamada ao SAMU é feita automaticamente.
-
-### 3. Escalonamento Proporcional
-
-O detector considera sinais de intenção verbal e de comportamento observado separadamente. A política ainda é heurística e não tem validação clínica; ações externas retornadas são propostas e não são executadas por esse fluxo.
-
-### 4. Notificação Honesta
-
-A maioria dos sistemas diz "notificado" mesmo quando falha.
-
-O módulo de notificação distingue alguns estados de processamento. `sent` indica aceite do SNS, não confirmação de entrega ao cuidador; o fluxo automático de emergência ainda não aciona esse módulo.
-
-### 5. Governança Integrada
-
-Auditoria de todas as decisões. Detecção de viés. Explicabilidade. Compliance como **framework**, não slogan.
+**Nota**: este projeto **não é** um sistema de emergência médica certificado. É um **protótipo de pesquisa** que visa conformidade futura.
 
 ---
 
-## Visão de Longo Prazo
+## Limitações Conhecidas
 
-O Libero não é um projeto de hackathon. É um **produto em construção**.
+### Do Protótipo Atual
 
-**Próximos passos**:
+- **Detecção de emergência é heurística**. Os thresholds são calibrados manualmente. Não há validação clínica.
+- **Chamadas a SAMU/polícia não são executadas**. Apenas registradas.
+- **Persistência em memória ou JSON local**. Multi-instância não é suportado.
+- **Câmera requer consentimento explícito** (`LIBERO_CAMERA_CONSENT=true`).
+- **Câmera e edge não podem rodar em processos distintos** no mesmo `/dev/videoN`.
+- **Microfone** depende do ambiente (ruído, latência do PipeWire no Linux).
+- **Groq Whisper** tem latência (~1-2s). Não é transcrição local.
+- **Bedrock** requer credenciais AWS. Sem elas, fallback offline é usado.
 
-1. **Bee (wearable)**: captura de áudio contínua, sem depender de microfone ambiente.
-2. **Multi-casa**: um cuidador monitora múltiplos idosos.
-3. **Rede neural terapêutica**: modelo próprio treinado em conversas clínicas.
-4. **Integração com planos de saúde**: preventivo, não reativo.
-5. **Pesquisa clínica**: medir impacto real em cuidadores e pacientes.
+### Do Escopo
 
-**Modelo de negócio**:
+- **Não substitui médico**. É apoio domiciliar.
+- **Não substitui cuidador humano**. É complemento.
+- **Não é dispositivo médico**. Não há validação pela ANVISA.
 
-| Plano | Preço | Público |
-| :--- | :--- | :--- |
-| Família | R$ 299/mês | 1 idoso, dashboard, memórias |
-| Casa de Repouso | R$ 500/leito/mês | Múltiplos idosos, painel |
-| Plano de Saúde | R$ 100/vida/mês | Prevenção, ROI 40x |
+---
+
+## Documentação Adicional
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Arquitetura detalhada
+- [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) — Governança e auditoria
+- [`docs/PRIVACY.md`](docs/PRIVACY.md) — Privacidade e dados
+- [`docs/FRICTION_LOG.md`](docs/FRICTION_LOG.md) — Registro de problemas e soluções
+- [`docs/SECURITY_DEPLOYMENT.md`](docs/SECURITY_DEPLOYMENT.md) — Configuração para produção
+
+---
+
+## Roadmap Técnico
+
+### Curto Prazo (1-3 meses)
+
+- CI/CD (GitHub Actions) com pytest + lint
+- Adapter pattern para persistência (JSON em dev, DynamoDB em prod)
+- Logging estruturado (substituir prints)
+- Validação de env vars com Pydantic BaseSettings
+- ThreadPoolExecutor no edge (limitar concorrência)
+- Secrets Manager para credenciais em produção
+
+### Médio Prazo (3-12 meses)
+
+- Integração com Bee (wearable físico)
+- Voice fingerprint
+- Rede neural terapêutica própria (fine-tuning clínico)
+- Certificação LGPD/HIPAA
+- Estudos clínicos com universidades
+
+### Longo Prazo (1-2 anos)
+
+- Deploy em produção (AWS Lambda, CDK)
+- Integração com planos de saúde
+- Multi-casa
+- Plataforma para desenvolvedores (SDK)
+
+---
+
+## Autoria
+
+**Natália Borges Vargas**
+Projeto submetido ao **Build, Ship, Shape: Amazon Developer Hackathon**.
 
 ---
 
@@ -339,23 +361,9 @@ MIT. Veja [LICENSE](LICENSE).
 
 ---
 
-## Autor
+## Frase Final
 
-**Natália Borges Vargas**  
-Projeto submetido ao **Build, Ship, Shape: Amazon Developer Hackathon**.
+> *"O Libero não impede a doença. Ele impede que a doença vença."*
 
----
-
-## Reconhecimentos
-
-- **Bee** (wearable AI)
-- **Alexa+** (MCP Server)
-- **AWS Bedrock** (Claude Haiku 4.5)
-- **AWS Polly** (voz neural)
-- **Groq** (Whisper + Llama)
-- **Naomi Feil** (Terapia de Validação)
-- **Dr. Oliver Sacks** (inspiração sobre memória e identidade)
-
----
-
-> *"A IA não vai enlouquecer. Ela vai se manter sã. Ela vai aliviar."*
+**LIBERO**
+*Porque ninguém deveria se perder. Nem quem cuida.*

@@ -27,7 +27,7 @@ def _get_bedrock():
         try:
             _bedrock = boto3.client("bedrock-runtime", region_name=REGION)
         except Exception:
-            _bedrock = False
+            _bedrock = None
     return _bedrock
 
 
@@ -265,6 +265,22 @@ def _resposta_local(tipo, nome, confianca):
     return f"{nome}, estou aqui. Está tudo bem."
 
 
+def _limpar_resposta(texto):
+    """Remove markdown e limita a 2 frases."""
+    import re
+    if not texto:
+        return None
+    texto = re.sub(r'[#*_`~]', '', texto)
+    texto = re.sub(r'^\s*[-•]\s*', '', texto, flags=re.MULTILINE)
+    texto = re.sub(r'\s+', ' ', texto).strip()
+    frases = re.split(r'(?<=[.!?])\s+', texto)
+    frases = [f.strip() for f in frases if f.strip()]
+    if not frases:
+        return None
+    resultado = ' '.join(frases[:2]).strip()
+    return resultado if len(resultado) >= 10 else None
+
+
 def gerar_resposta_seguranca(evento, contexto):
     """Gera resposta de segurança."""
     bedrock = _get_bedrock()
@@ -292,13 +308,23 @@ Gere uma resposta curta, calma e respeitosa."""
         response = bedrock.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
         resultado = json.loads(response["body"].read())
         texto = resultado["content"][0]["text"].strip()
+        
+        # 1. Limpar markdown e limitar a 2 frases
+        texto_limpo = _limpar_resposta(texto)
+        
+        # Se a limpeza falhou, usar resposta local
+        if not texto_limpo:
+            return _resposta_local(tipo, nome, confianca)
+        
+        # 2. Bloquear alegações de ação (não deve dizer que está fazendo)
         alegacao_de_acao = re.search(
             r"\b(?:vou|estou|já|acionei|chamei|avisei|notifiquei)\b"
             r".{0,50}\b(?:ajuda|samu|família|cuidador|emergência|câmera)\b",
-            texto,
+            texto_limpo,
             re.IGNORECASE | re.DOTALL,
         )
-        return _resposta_local(tipo, nome, confianca) if alegacao_de_acao else texto
+        
+        return _resposta_local(tipo, nome, confianca) if alegacao_de_acao else texto_limpo
     except Exception as e:
         print(f"[Libero Segurança] Erro Bedrock: {e}")
         return _resposta_local(tipo, nome, confianca)
@@ -309,6 +335,12 @@ Gere uma resposta curta, calma e respeitosa."""
 # ============================================================
 
 def agir(evento, contexto):
+    """
+    IMPORTANTE: Esta função APENAS PROPÕE ações.
+    Nenhuma ação externa (SAMU, polícia, câmera) é executada automaticamente.
+    Todas as ações são registradas com status "proposta_nao_executada"
+    e precisam de confirmação humana via UI.
+    """
     """
     Monta um plano de ação proporcional; não executa serviços externos.
 
@@ -336,7 +368,7 @@ def agir(evento, contexto):
             "status": "proposta_nao_executada",
         })
         
-        if contexto.get("camera_autorizada", True):
+        if contexto.get("camera_autorizada", False):
             acoes.append({
                 "tipo": "ativar_camera", "local": contexto.get("local"),
                 "status": "proposta_nao_executada",
@@ -401,3 +433,26 @@ if __name__ == "__main__":
     
     r = detectar_fuga("Vou sair", 10, True, {"porta_aberta": True})
     print(f"Intenção + porta: {r}")
+
+
+
+# ============================================================
+# BROADCAST DE EMERGÊNCIA (notificação em tempo real)
+# ============================================================
+
+async def broadcast_emergencia(evento, contexto):
+    """Envia notificação de emergência via WebSocket."""
+    try:
+        from cloud.mcp_server.websocket import gerenciador_ws
+        await gerenciador_ws.broadcast({
+            "tipo": "emergencia",
+            "idoso_id": contexto.get("idoso_id", "dona-maria"),
+            "evento": evento.get("tipo"),
+            "confianca": evento.get("confianca"),
+            "local": contexto.get("local", "casa"),
+            "timestamp": contexto.get("timestamp_utc"),
+            "texto": f"Emergência detectada: {evento.get('tipo')}"
+        })
+        print(f"[Libero] Notificação de emergência enviada")
+    except Exception as e:
+        print(f"[Libero] Erro ao enviar notificação: {e}")

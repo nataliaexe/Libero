@@ -15,6 +15,7 @@ from edge.decision.levels import (
 )
 from cloud.agents import companion, safety, memory
 from cloud.mcp_server.chat import get_store
+import asyncio
 
 
 class Orquestrador:
@@ -27,6 +28,7 @@ class Orquestrador:
         """
         self.idoso_id = idoso_id
         self.contexto = contexto or {}
+        self.contexto.setdefault("camera_autorizada", False)
         self.historico = []
         self.timezone_offset = timezone_offset
     
@@ -41,17 +43,21 @@ class Orquestrador:
         local = utc + timedelta(hours=self.timezone_offset)
         return local.hour
 
-    def _registrar_chat(self, texto, resposta, nivel, tipo="normal", metadata=None):
+    def _registrar_chat(
+        self, texto, resposta, nivel, tipo="normal", metadata=None,
+        tipo_texto="normal", tipo_resposta=None,
+    ):
         """Persiste a interação para que o dashboard veja o resultado real."""
         try:
             store = get_store()
             if texto:
                 store.adicionar_mensagem(
-                    self.idoso_id, "idoso", texto, tipo=tipo, metadata=metadata
+                    self.idoso_id, "idoso", texto, tipo=tipo_texto, metadata=metadata
                 )
             if resposta:
                 store.adicionar_mensagem(
-                    self.idoso_id, "libero", resposta, tipo=tipo,
+                    self.idoso_id, "libero", resposta,
+                    tipo=tipo_resposta or tipo,
                     metadata={"nivel": nivel, **(metadata or {})},
                 )
         except Exception as e:
@@ -89,6 +95,7 @@ class Orquestrador:
             self._registrar_chat(
                 texto, resposta, resultado["nivel"], "emergencia",
                 {"evento": evento["tipo"], "acoes_externas_executadas": False},
+                tipo_texto="normal", tipo_resposta="emergencia",
             )
             
             self.historico.append({
@@ -136,6 +143,7 @@ class Orquestrador:
             self._registrar_chat(
                 texto, resposta, nivel_resultado, tipo_mensagem,
                 {"evento": evento.get("tipo"), "acoes_externas_executadas": False},
+                tipo_texto="normal", tipo_resposta=tipo_mensagem,
             )
             
             self.historico.append({
@@ -189,6 +197,8 @@ class Orquestrador:
         self._registrar_chat(
             texto, resposta, nivel.value, tipo_mensagem,
             {"memoria_id": memoria_gravada.get("id")} if memoria_gravada else None,
+            tipo_texto="normal",
+            tipo_resposta="memoria" if memoria_gravada else "normal",
         )
         
         return {

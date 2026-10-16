@@ -114,8 +114,9 @@ def conversar(mensagem, contexto=None):
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": f"Nome: {nome}\nIdoso: {mensagem}"}
                 ],
-                max_tokens=80,
-                temperature=0.7
+                max_tokens=200,
+                temperature=0.7,
+                **({"reasoning_effort": "low"} if GROQ_MODEL and "gpt-oss" in GROQ_MODEL else {}),
             )
             texto = response.choices[0].message.content
             limpo = _limpar_resposta(texto)
@@ -128,8 +129,9 @@ def conversar(mensagem, contexto=None):
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": f"Nome: {nome}\nIdoso: {mensagem}"}
                 ],
-                max_tokens=80,
-                temperature=0.3
+                max_tokens=200,
+                temperature=0.3,
+                **({"reasoning_effort": "low"} if GROQ_MODEL and "gpt-oss" in GROQ_MODEL else {}),
             )
             texto = response.choices[0].message.content
             limpo = _limpar_resposta(texto)
@@ -145,7 +147,7 @@ def conversar(mensagem, contexto=None):
                 modelId=BEDROCK_MODEL,
                 body=json.dumps({
                     "anthropic_version": "bedrock-2023-05-31",
-                    "max_tokens": 80,
+                    "max_tokens": 200,
                     "system": SYSTEM_PROMPT,
                     "messages": [{"role": "user", "content": f"Nome: {nome}\nIdoso: {mensagem}"}]
                 })

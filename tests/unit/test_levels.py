@@ -28,6 +28,26 @@ def test_observacao():
     assert decidir_nivel("Oi", 12, False) == Nivel.OBSERVACAO
 
 
+def test_pedido_de_ajuda_escalona_proporcionalmente():
+    assert decidir_nivel("Me ajuda", 12, False) == Nivel.INTERVENCAO
+    assert decidir_nivel("Ajuda!", 12, False) == Nivel.INTERVENCAO
+    assert decidir_nivel("Me ajuda!", 12, False) == Nivel.EMERGENCIA
+    assert decidir_nivel("Socorro, minha filha, me ajuda!", 12, False) == Nivel.EMERGENCIA
+    assert decidir_nivel("Eu já caí e não consigo levantar", 12, False) in {
+        Nivel.INTERVENCAO, Nivel.EMERGENCIA,
+    }
+    assert decidir_nivel("Me machuquei, ele não me ajudou", 12, False) in {
+        Nivel.INTERVENCAO, Nivel.EMERGENCIA,
+    }
+
+
+def test_match_de_confusao_exige_palavra_inteira():
+    assert decidir_nivel("cadeira", 12, False) == Nivel.OBSERVACAO
+    assert decidir_nivel("cadê", 12, False) == Nivel.INTERVENCAO
+    assert decidir_nivel("quero ir", 12, False) == Nivel.INTERVENCAO
+    assert decidir_nivel("quero ir ao banheiro", 12, False) == Nivel.INTERVENCAO
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

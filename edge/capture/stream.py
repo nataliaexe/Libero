@@ -8,6 +8,9 @@ import cv2
 import numpy as np
 from datetime import datetime, timezone
 import threading
+import sys
+sys.path.insert(0, "/home/nana/libero")
+from edge.camera_server import set_frame
 import time
 import os
 
@@ -83,18 +86,25 @@ class CameraLibero:
     
     def iniciar(self):
         """Inicia câmera e thread."""
-        self.cap = cv2.VideoCapture(self.camera_id)
-        
-        if not self.cap.isOpened():
+        camera_ids = [self.camera_id, 1 if self.camera_id == 0 else 0]
+        for camera_id in camera_ids:
+            cap = None
+            try:
+                cap = cv2.VideoCapture(camera_id)
+                if cap.isOpened():
+                    self.cap = cap
+                    self.camera_id = camera_id
+                    break
+            except Exception as e:
+                print(f"[Libero Câmera] Erro ao abrir câmera {camera_id}: {e}")
+            if cap is not None:
+                cap.release()
+            print(f"[Libero Câmera] Câmera {camera_id} indisponível; tentando alternativa")
+
+        if self.cap is None:
             raise RuntimeError(
-                f"Não foi possível abrir câmera {self.camera_id}.\n\n"
-                "No Linux:\n"
-                "  1. Verificar permissão: ls -la /dev/video*\n"
-                "  2. Adicionar usuário ao grupo: sudo usermod -a -G video $USER\n"
-                "  3. Logout/login\n"
-                "  4. Testar: guvcview\n\n"
-                "No Windows: verificar se a câmera está em uso\n"
-                "No Mac: dar permissão em Preferências do Sistema"
+                f"Não foi possível abrir as câmeras {camera_ids[0]} ou {camera_ids[1]}. "
+                "Verifique as permissões e se os dispositivos estão conectados."
             )
         
         self.rodando = True
@@ -120,6 +130,13 @@ class CameraLibero:
                 if not ret:
                     time.sleep(0.1)
                     continue
+                
+                # Publicar frame para o servidor de câmera
+                try:
+                    _, jpeg = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    set_frame(jpeg.tobytes())
+                except Exception:
+                    pass
                 
                 evento = self._processar_frame(frame)
                 

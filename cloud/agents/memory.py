@@ -5,6 +5,10 @@ Grava, organiza e preserva histórias do idoso.
 
 import os
 import json
+import re
+import tempfile
+from pathlib import Path
+from threading import Lock
 import boto3
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -14,6 +18,8 @@ load_dotenv()
 REGION = os.getenv("AWS_REGION", "us-east-1")
 MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
 BUCKET = os.getenv("S3_BUCKET", "")
+MEMORY_DIR = Path.home() / "libero" / "data" / "memorias"
+_memory_lock = Lock()
 
 _bedrock = None
 _s3 = None
@@ -25,7 +31,7 @@ def _get_bedrock():
             _bedrock = boto3.client("bedrock-runtime", region_name=REGION)
         except Exception as e:
             print(f"[Libero] Bedrock não disponível: {e}")
-            _bedrock = False
+            _bedrock = None
     return _bedrock
 
 def _get_s3():
@@ -176,11 +182,42 @@ def gravar_memoria(idoso_id, texto, contexto):
         "tags": organizada.get("tags", []),
         "confianca": historia["confianca"]
     }
+
+    if not isinstance(idoso_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", idoso_id):
+        raise ValueError("idoso_id inválido")
+
+    MEMORY_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(MEMORY_DIR, 0o700)
+    arquivo_memorias = MEMORY_DIR / f"{idoso_id}.json"
+    with _memory_lock:
+        try:
+            with arquivo_memorias.open("r", encoding="utf-8") as arquivo:
+                memorias = json.load(arquivo)
+            if not isinstance(memorias, list):
+                raise ValueError(f"Formato inválido em {arquivo_memorias}")
+        except FileNotFoundError:
+            memorias = []
+
+        memorias.append(memoria)
+        fd, temporario = tempfile.mkstemp(dir=MEMORY_DIR, prefix=".memoria-", suffix=".tmp")
+        try:
+            os.fchmod(fd, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as arquivo:
+                json.dump(memorias, arquivo, ensure_ascii=False, indent=2)
+                arquivo.flush()
+                os.fsync(arquivo.fileno())
+            os.replace(temporario, arquivo_memorias)
+        except Exception:
+            try:
+                os.unlink(temporario)
+            except FileNotFoundError:
+                pass
+            raise
     
     s3 = _get_s3()
     if BUCKET and s3:
         try:
-            key = f"memorias/{idoso_id}/{datetime.now(timezone.utc).isoformat()}.json"
+            key = f"memorias/{idoso_id}/{memoria['timestamp']}.json"
             s3.put_object(
                 Bucket=BUCKET,
                 Key=key,
@@ -191,8 +228,7 @@ def gravar_memoria(idoso_id, texto, contexto):
             print(f"[Libero Memória] Salvo em s3://{BUCKET}/{key}")
         except Exception as e:
             print(f"[Libero Memória] Erro S3: {e}")
-    else:
-        print(f"[Libero Memória] Gravado localmente: {memoria['titulo']}")
+    print(f"[Libero Memória] Salvo localmente: {memoria['titulo']}")
     
     return {"gravado": True, "memoria": memoria}
 
