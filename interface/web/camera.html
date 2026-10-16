@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Libero — Câmera ao Vivo</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0d1117;
+    color: #e6edf3;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  .header {
+    text-align: center;
+    margin-bottom: 30px;
+  }
+  .header h1 {
+    font-size: 36px;
+    font-weight: 800;
+    background: linear-gradient(135deg, #58a6ff, #e94560);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    letter-spacing: 2px;
+  }
+  .header .tagline {
+    font-size: 14px;
+    color: #8b949e;
+    font-style: italic;
+    margin-top: 4px;
+  }
+  .nav {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 20px;
+  }
+  .nav a {
+    padding: 10px 20px;
+    background: #21262d;
+    color: #e6edf3;
+    text-decoration: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .nav a.active {
+    background: #1f6feb;
+  }
+  .nav a:hover { opacity: 0.9; }
+  .container {
+    max-width: 900px;
+    margin: 0 auto;
+  }
+  .camera-box {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 20px;
+    position: relative;
+  }
+  .camera-box img {
+    width: 100%;
+    border-radius: 8px;
+    display: block;
+    background: #0d1117;
+  }
+  .camera-box img[hidden] { display: none; }
+  .camera-placeholder {
+    min-height: 360px;
+    display: grid;
+    place-items: center;
+    color: #8b949e;
+    background: #0d1117;
+    border-radius: 8px;
+  }
+  .logout-btn { margin-top: 12px; padding: 8px 14px; border: 1px solid #30363d; border-radius: 8px; background: #21262d; color: #e6edf3; cursor: pointer; }
+  .camera-controls {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+  .btn {
+    padding: 12px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    color: white;
+  }
+  .btn.primary { background: #238636; }
+  .btn.danger { background: #da3633; }
+  .btn.secondary { background: #1f6feb; }
+  .btn:hover { opacity: 0.9; }
+  .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    margin-bottom: 16px;
+  }
+  .status-bar .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #3fb950;
+    animation: pulse 2s infinite;
+  }
+  .status-bar .dot.off { background: #8b949e; animation: none; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .status-bar .text { flex: 1; font-size: 14px; }
+  .status-bar .time { font-size: 12px; color: #8b949e; }
+  .privacy-note {
+    padding: 16px;
+    background: #0d1117;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #8b949e;
+    line-height: 1.6;
+  }
+  .privacy-note strong { color: #58a6ff; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>LIBERO</h1>
+      <p class="tagline">Porque ninguém deveria se perder. Nem quem cuida.</p>
+      <button class="logout-btn" onclick="fazerLogout()">Sair</button>
+    </div>
+
+    <div class="nav">
+      <a href="dashboard.html">Dashboard</a>
+      <a href="camera.html" class="active">Câmera</a>
+      <a href="chat.html">Chat</a>
+      <a href="memorias.html">Memórias</a>
+    </div>
+
+    <div class="status-bar">
+      <div class="dot" id="status-dot"></div>
+      <div class="text" id="status-text">Câmera ativa · Transmitindo em tempo real</div>
+      <div class="time" id="status-time">Agora</div>
+    </div>
+
+    <div class="camera-box">
+      <img id="camera-feed" src="" alt="Câmera do Libero" hidden>
+      <div id="camera-placeholder" class="camera-placeholder">Câmera indisponível</div>
+      <div class="camera-controls">
+        <button class="btn primary" onclick="iniciarCamera()">Iniciar</button>
+        <button class="btn danger" onclick="pararCamera()">Parar</button>
+        <button class="btn secondary" onclick="atualizarStatus()">Atualizar</button>
+      </div>
+    </div>
+
+    <div class="privacy-note">
+      <strong>🔒 Privacidade</strong><br>
+      O vídeo é processado localmente no seu dispositivo. Nada é enviado para a nuvem.
+      A câmera só é ativada em situações de emergência ou quando você autoriza.
+    </div>
+  </div>
+
+<script>
+  const API_URL = window.LIBERO_API_URL || (window.location.protocol === "file:" || ["3000", "5500"].includes(window.location.port) && ["localhost", "127.0.0.1"].includes(window.location.hostname) ? `http://${window.location.hostname || "localhost"}:8080` : window.location.origin);
+
+  async function fazerLogout() {
+    try {
+      await fetch(`${API_URL}/auth/logout`, { method: "POST", credentials: "include" });
+    } finally {
+      localStorage.removeItem("libero_token");
+      localStorage.removeItem("libero_user");
+      window.location.href = "dashboard.html";
+    }
+  }
+
+  function mostrarPlaceholder() {
+    document.getElementById("camera-feed").hidden = true;
+    document.getElementById("camera-feed").src = "";
+    document.getElementById("camera-placeholder").hidden = false;
+  }
+
+  async function verificarSessao() {
+    const resp = await fetch(`${API_URL}/auth/me`, { credentials: "include" });
+    if (!resp.ok) {
+      window.location.href = "dashboard.html";
+      return false;
+    }
+    const user = await resp.json();
+    localStorage.removeItem("libero_token");
+    localStorage.setItem("libero_user", JSON.stringify({ nome: user.nome, role: user.role, idoso_id: user.idoso_id }));
+    return true;
+  }
+
+  async function iniciarCamera() {
+    try {
+      const start = await fetch(`${API_URL}/camera/start`, {
+        method: "POST",
+        credentials: "include"
+      });
+      if (!start.ok) throw new Error("Acesso à câmera não autorizado");
+      const ticketResponse = await fetch(`${API_URL}/camera/stream-ticket`, {
+        method: "POST",
+        credentials: "include"
+      });
+      if (!ticketResponse.ok) throw new Error("Não foi possível autorizar o stream");
+      const { ticket } = await ticketResponse.json();
+      const feed = document.getElementById("camera-feed");
+      feed.onerror = mostrarPlaceholder;
+      feed.src = `${API_URL}/camera/stream?ticket=${encodeURIComponent(ticket)}`;
+      feed.hidden = false;
+      document.getElementById("camera-placeholder").hidden = true;
+      atualizarStatus();
+    } catch (e) {
+      mostrarPlaceholder();
+      document.getElementById("status-text").textContent = "Câmera indisponível";
+    }
+  }
+
+  async function pararCamera() {
+    try {
+      await fetch(`${API_URL}/camera/stop`, {
+        method: "POST",
+        credentials: "include"
+      });
+      mostrarPlaceholder();
+      atualizarStatus();
+    } catch (e) {
+      alert("Erro ao parar câmera: " + e.message);
+    }
+  }
+
+  async function atualizarStatus() {
+    try {
+      const resp = await fetch(`${API_URL}/camera/status`, { credentials: "include" });
+      if (resp.status === 401) {
+        window.location.href = "dashboard.html";
+        return;
+      }
+      if (!resp.ok) throw new Error("Câmera indisponível");
+      const json = await resp.json();
+      
+      const dot = document.getElementById("status-dot");
+      const text = document.getElementById("status-text");
+      const time = document.getElementById("status-time");
+      
+      if (json.rodando) {
+        dot.className = "dot";
+        text.textContent = `Câmera ativa · ${json.fps} fps`;
+      } else {
+        dot.className = "dot off";
+        text.textContent = "Câmera parada";
+      }
+      
+      time.textContent = new Date().toLocaleTimeString("pt-BR");
+    } catch (e) {
+      mostrarPlaceholder();
+      document.getElementById("status-text").textContent = "Câmera indisponível";
+    }
+  }
+
+  // Iniciar automaticamente
+  window.addEventListener("load", async () => {
+    mostrarPlaceholder();
+    try {
+      if (await verificarSessao()) {
+        await iniciarCamera();
+        setInterval(atualizarStatus, 5000);
+      }
+    } catch (e) {
+      mostrarPlaceholder();
+      document.getElementById("status-text").textContent = "Câmera indisponível";
+    }
+  });
+</script>
+</body>
+</html>

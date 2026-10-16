@@ -3,11 +3,24 @@ services:
     build: .
     container_name: libero-mcp
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
-      - AWS_REGION=${AWS_REGION:-us-east-1}
-      - MCP_PORT=8080
-      - MCP_HOST=0.0.0.0
+      LIBERO_ENV: production
+      LIBERO_ALLOWED_ORIGINS: ${LIBERO_ALLOWED_ORIGINS:?Configure the public HTTPS dashboard origin}
+      LIBERO_USERS_JSON: ${LIBERO_USERS_JSON:?Configure production users and an admin account}
+      MCP_PORT: "8080"
+      MCP_HOST: 0.0.0.0
+      AWS_REGION: ${AWS_REGION:-us-east-1}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_LLM_MODEL: ${GROQ_LLM_MODEL:-}
+      BEDROCK_MODEL_ID: ${BEDROCK_MODEL_ID:-}
+      POLLY_VOICE: ${POLLY_VOICE:-Camila}
+      WHISPER_MODEL: ${WHISPER_MODEL:-whisper-large-v3-turbo}
+      DYNAMODB_TABLE: ${DYNAMODB_TABLE:-}
+      TIMESTREAM_DATABASE: ${TIMESTREAM_DATABASE:-}
+      TIMESTREAM_TABLE: ${TIMESTREAM_TABLE:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      SNS_TOPIC_ARN: ${SNS_TOPIC_ARN:-}
     volumes:
       - ./cloud:/app/cloud
       - ./edge:/app/edge
@@ -17,7 +30,7 @@ services:
     image: amazon/dynamodb-local
     container_name: libero-dynamodb
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     command: "-jar DynamoDBLocal.jar -sharedDb -dbPath /home/dynamodblocal/data"
     volumes:
       - dynamodb-data:/home/dynamodblocal/data

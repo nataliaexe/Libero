@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Libero — Memórias</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; padding: 20px; }
+  .header { text-align: center; margin-bottom: 20px; }
+  .header h1 { font-size: 36px; font-weight: 800; background: linear-gradient(135deg, #58a6ff, #e94560); -webkit-background-clip: text; -webkit-text-fill-color: transparent; letter-spacing: 2px; }
+  .header .tagline { font-size: 14px; color: #8b949e; font-style: italic; margin-top: 4px; }
+  .nav { display: flex; justify-content: center; gap: 10px; margin-bottom: 20px; flex-wrap: wrap; }
+  .nav a { padding: 10px 20px; background: #21262d; color: #e6edf3; text-decoration: none; border-radius: 8px; font-size: 14px; font-weight: 600; }
+  .nav a.active { background: #1f6feb; }
+  .container { max-width: 900px; margin: 0 auto; }
+  .intro { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+  .intro h2 { color: #d29922; font-size: 20px; margin-bottom: 8px; }
+  .intro p { color: #8b949e; font-size: 14px; line-height: 1.6; }
+  .memorias { display: grid; gap: 16px; }
+  .memoria { background: #161b22; border: 1px solid #30363d; border-left: 4px solid #d29922; border-radius: 12px; padding: 20px; }
+  .memoria .titulo { font-size: 18px; font-weight: 700; color: #e6edf3; margin-bottom: 8px; }
+  .memoria .resumo { font-size: 15px; line-height: 1.6; color: #c9d1d9; margin-bottom: 12px; }
+  .memoria .meta { display: flex; gap: 16px; font-size: 12px; color: #8b949e; flex-wrap: wrap; }
+  .memoria .tag { padding: 2px 8px; background: #d2992220; color: #d29922; border-radius: 4px; font-size: 11px; font-weight: 600; }
+  .empty { text-align: center; padding: 60px 20px; color: #8b949e; font-style: italic; }
+  .logout-btn { margin-top: 12px; padding: 8px 14px; border: 1px solid #30363d; border-radius: 8px; background: #21262d; color: #e6edf3; cursor: pointer; }
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>LIBERO</h1>
+      <p class="tagline">Memórias de Dona Maria</p>
+      <button class="logout-btn" onclick="fazerLogout()">Sair</button>
+    </div>
+
+    <div class="nav">
+      <a href="dashboard.html">Dashboard</a>
+      <a href="camera.html">Câmera</a>
+      <a href="chat.html">Chat</a>
+      <a href="memorias.html" class="active">Memórias</a>
+    </div>
+
+    <div class="intro">
+      <h2>🏛️ Museu Vivo</h2>
+      <p>As histórias que Dona Maria conta ficam aqui. Um legado para a família. Uma âncora para ela.</p>
+    </div>
+
+    <div class="memorias" id="lista">
+      <div class="empty">Carregando memórias...</div>
+    </div>
+  </div>
+
+<script>
+  const API_URL = window.LIBERO_API_URL || (window.location.protocol === "file:" || ["3000", "5500"].includes(window.location.port) && ["localhost", "127.0.0.1"].includes(window.location.hostname) ? `http://${window.location.hostname || "localhost"}:8080` : window.location.origin);
+  let IDOSO_ID = "";
+
+  async function fazerLogout() {
+    try {
+      await fetch(`${API_URL}/auth/logout`, { method: "POST", credentials: "include" });
+    } finally {
+      localStorage.removeItem("libero_token");
+      localStorage.removeItem("libero_user");
+      window.location.href = "dashboard.html";
+    }
+  }
+
+  async function verificarSessao() {
+    const resp = await fetch(`${API_URL}/auth/me`, { credentials: "include" });
+    if (!resp.ok) {
+      window.location.href = "dashboard.html";
+      return false;
+    }
+    const user = await resp.json();
+    IDOSO_ID = user.idoso_id && user.idoso_id !== "*" ? user.idoso_id : "dona-maria";
+    localStorage.removeItem("libero_token");
+    localStorage.setItem("libero_user", JSON.stringify({ nome: user.nome, role: user.role, idoso_id: user.idoso_id }));
+    return true;
+  }
+
+  function escaparHtml(valor) {
+    return String(valor ?? "").replace(/[&<>"']/g, caractere => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[caractere]);
+  }
+
+  async function carregar() {
+    try {
+      const resp = await fetch(`${API_URL}/chat/${IDOSO_ID}/memorias`, {
+        credentials: "include"
+      });
+      if (!resp.ok) {
+        document.getElementById("lista").innerHTML = '<div class="empty">Erro. Verifique se está logado.</div>';
+        return;
+      }
+      const json = await resp.json();
+      const memorias = json.memorias || [];
+      
+      if (memorias.length === 0) {
+        document.getElementById("lista").innerHTML = '<div class="empty">Nenhuma memória ainda. As histórias aparecerão aqui.</div>';
+        return;
+      }
+      
+      // Mais recentes primeiro
+      memorias.reverse();
+      
+      document.getElementById("lista").innerHTML = memorias.map(m => {
+        const data = new Date(m.timestamp).toLocaleDateString("pt-BR", {
+          day: "2-digit", month: "long", year: "numeric",
+          hour: "2-digit", minute: "2-digit"
+        });
+        const meta = m.metadata || {};
+        const tags = [];
+        if (meta.pessoas) tags.push(...meta.pessoas.map(p => `<span class="tag">${escaparHtml(p)}</span>`));
+        if (meta.emocao) tags.push(`<span class="tag">${escaparHtml(meta.emocao)}</span>`);
+        
+        return `
+          <div class="memoria">
+            <div class="titulo">${escaparHtml(meta.titulo || "História")}</div>
+            <div class="resumo">${escaparHtml(m.texto)}</div>
+            <div class="meta">
+              <span>📅 ${data}</span>
+              ${tags.length ? `<span>${tags.join(" ")}</span>` : ""}
+            </div>
+          </div>
+        `;
+      }).join("");
+    } catch (e) {
+      document.getElementById("lista").innerHTML = `<div class="empty">Erro: ${escaparHtml(e.message)}</div>`;
+    }
+  }
+
+  async function iniciarPagina() {
+    if (await verificarSessao()) await carregar();
+  }
+
+  iniciarPagina();
+</script>
+</body>
+</html>

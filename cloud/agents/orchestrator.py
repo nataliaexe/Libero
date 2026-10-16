@@ -1,5 +1,6 @@
 """
 Libero - Orquestrador
+Coordena agentes com timestamps consistentes em UTC.
 """
 
 import os
@@ -8,71 +9,105 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
-from edge.decision.levels import decidir_nivel, Nivel, descrever_nivel
+from edge.decision.levels import (
+    decidir_nivel, Nivel, descrever_nivel,
+    detectar_emergencia_contextual
+)
 from cloud.agents import companion, safety, memory
+from cloud.mcp_server.chat import get_store
 
 
 class Orquestrador:
-    def __init__(self, idoso_id, contexto=None):
+    def __init__(self, idoso_id, contexto=None, timezone_offset=-3):
+        """
+        Args:
+            idoso_id: ID do idoso
+            contexto: dict com nome, local, etc.
+            timezone_offset: offset do fuso em horas (default: -3 Brasil)
+        """
         self.idoso_id = idoso_id
         self.contexto = contexto or {}
         self.historico = []
+        self.timezone_offset = timezone_offset
     
-    def _agora(self):
+    def _agora_utc(self):
+        """Timestamp UTC padronizado."""
         return datetime.now(timezone.utc).isoformat()
     
-    def processar(self, texto, features=None, movimento=False):
-        features = features or {}
-        hora = datetime.now().hour
+    def _hora_local(self):
+        """Hora local do idoso (baseada no offset)."""
+        from datetime import timedelta
+        utc = datetime.now(timezone.utc)
+        local = utc + timedelta(hours=self.timezone_offset)
+        return local.hour
+    
+    def processar(self, texto, features_audio=None, features_visao=None, movimento=False):
+        """
+        Processa entrada com análise contextual.
+        
+        Returns:
+            dict com nível, ações, resposta
+        """
+        features_audio = features_audio or {}
+        features_visao = features_visao or {}
+        hora_local = self._hora_local()
         
         self.contexto.update({
-            "hora": f"{hora:02d}:00",
-            "movimento": movimento
+            "hora_local": f"{hora_local:02d}:00",
+            "movimento": movimento,
+            "timestamp_utc": self._agora_utc()
         })
         
-        # 1. PRIORIDADE ABSOLUTA: Emergência por texto
-        nivel_texto = decidir_nivel(texto, hora, movimento)
+        # 1. EMERGÊNCIA por texto (com contexto)
+        emergencia = detectar_emergencia_contextual(texto)
         
-        if nivel_texto == Nivel.EMERGENCIA:
-            evento = {"detectado": True, "confianca": 1.0, "tipo": "emergencia_texto"}
+        if emergencia["nivel"] == Nivel.EMERGENCIA:
+            evento = {
+                "detectado": True,
+                "confianca": 0.9 if emergencia["confianca"].value == "alta" else 0.7,
+                "tipo": "emergencia_texto",
+                "razao": emergencia["razao"]
+            }
             resultado = safety.agir(evento, self.contexto)
             
             self.historico.append({
-                "timestamp": self._agora(),
+                "timestamp_utc": self._agora_utc(),
                 "texto": texto,
                 "evento": evento,
-                "nivel": 3
+                "nivel": resultado["nivel"],
+                "confianca": emergencia["confianca"].value
             })
             
             return {
-                "nivel": 3,
+                "nivel": resultado["nivel"],
                 "nivel_nome": "EMERGENCIA",
+                "confianca": emergencia["confianca"].value,
                 "evento": evento,
                 "acoes": resultado["acoes"],
                 "resposta": resultado["acoes"][0]["conteudo"] if resultado["acoes"] else None
             }
         
-        # 2. Verificar segurança (queda, fuga, agitação)
+        # 2. Verificar segurança multimodal
         eventos = []
         
-        queda = safety.detectar_queda(features)
+        queda = safety.detectar_queda_multimodal(features_audio, features_visao, movimento)
         if queda["detectado"]:
             eventos.append(queda)
         
-        fuga = safety.detectar_fuga(texto, hora, movimento)
+        fuga = safety.detectar_fuga(texto, hora_local, movimento, self.contexto)
         if fuga["detectado"]:
             eventos.append(fuga)
         
-        agitacao = safety.detectar_agitacao(features, texto)
+        agitacao = safety.detectar_agitacao(features_audio, texto)
         if agitacao["detectado"]:
             eventos.append(agitacao)
         
         if eventos:
-            evento = max(eventos, key=lambda e: e["confianca"])
+            evento = max(eventos, key=lambda e: e.get("confianca", 0))
             resultado_seguranca = safety.agir(evento, self.contexto)
             
             self.historico.append({
-                "timestamp": self._agora(),
+                "timestamp_utc": self._agora_utc(),
                 "texto": texto,
                 "evento": evento,
                 "nivel": resultado_seguranca["nivel"]
@@ -86,7 +121,7 @@ class Orquestrador:
                 "resposta": resultado_seguranca["acoes"][0]["conteudo"] if resultado_seguranca["acoes"] else None
             }
         
-        # 3. Verificar memória (ANTES de decidir nível geral)
+        # 3. Verificar memória
         historia = memory.detectar_historia(texto)
         memoria_gravada = None
         
@@ -97,13 +132,13 @@ class Orquestrador:
             if resultado_memoria["gravado"]:
                 memoria_gravada = resultado_memoria["memoria"]
                 self.historico.append({
-                    "timestamp": self._agora(),
+                    "timestamp_utc": self._agora_utc(),
                     "texto": texto,
                     "memoria": memoria_gravada
                 })
         
-        # 4. Decidir nível (agora a história já foi extraída)
-        nivel = decidir_nivel(texto, hora, movimento)
+        # 4. Decidir nível
+        nivel = decidir_nivel(texto, hora_local, movimento)
         
         # 5. Agir
         resposta = None
@@ -111,7 +146,7 @@ class Orquestrador:
             resposta = companion.conversar(texto, self.contexto)
         
         self.historico.append({
-            "timestamp": self._agora(),
+            "timestamp_utc": self._agora_utc(),
             "texto": texto,
             "nivel": nivel.value,
             "nivel_nome": nivel.name
@@ -125,6 +160,44 @@ class Orquestrador:
             "memoria": memoria_gravada,
             "acoes": [{"tipo": "voz", "conteudo": resposta}] if resposta else []
         }
+        
+        # Salvar no chat store
+        try:
+            store = get_store()
+            if texto:
+                store.adicionar_mensagem(self.idoso_id, "idoso", texto)
+            if resposta:
+                tipo_msg = "normal"
+                if nivel.value == 3:
+                    tipo_msg = "emergencia"
+                elif memoria_gravada:
+                    tipo_msg = "memoria"
+                store.adicionar_mensagem(
+                    self.idoso_id, "libero", resposta,
+                    tipo=tipo_msg,
+                    metadata={"nivel": nivel.value, "nivel_nome": nivel.name}
+                )
+        except Exception as e:
+            print(f"[Libero] Erro ao salvar no chat: {e}")
+        
+        # Salvar no chat store
+        try:
+            store = get_store()
+            if texto:
+                store.adicionar_mensagem(self.idoso_id, "idoso", texto)
+            if resposta:
+                tipo_msg = "normal"
+                if nivel.value == 3:
+                    tipo_msg = "emergencia"
+                elif memoria_gravada:
+                    tipo_msg = "memoria"
+                store.adicionar_mensagem(
+                    self.idoso_id, "libero", resposta,
+                    tipo=tipo_msg,
+                    metadata={"nivel": nivel.value, "nivel_nome": nivel.name}
+                )
+        except Exception as e:
+            print(f"[Libero] Erro ao salvar no chat: {e}")
     
     def resumo(self):
         return {
@@ -134,27 +207,60 @@ class Orquestrador:
         }
 
 
+def lambda_handler(event, context):
+    """Handler para AWS Lambda."""
+    import json
+    
+    body = event.get("body")
+    if isinstance(body, str):
+        body = json.loads(body)
+    elif body is None:
+        body = event
+    
+    idoso_id = body.get("idoso_id", "default")
+    texto = body.get("texto", "")
+    features_audio = body.get("features_audio", {})
+    features_visao = body.get("features_visao", {})
+    movimento = body.get("movimento", False)
+    contexto = body.get("contexto", {})
+    
+    orq = Orquestrador(idoso_id, contexto)
+    resultado = orq.processar(texto, features_audio, features_visao, movimento)
+    
+    return {
+        "statusCode": 200,
+        "headers": {"Content-Type": "application/json"},
+        "body": json.dumps(resultado, ensure_ascii=False, default=str)
+    }
+
+
+# ============================================================
+# TESTE
+# ============================================================
+
 if __name__ == "__main__":
     orq = Orquestrador("dona-maria", {"nome": "Dona Maria", "local": "sala"})
     
     testes = [
-        ("Bom dia, como você está?", {"energia_media": 0.02}, False),
-        ("Preciso ir para casa.", {"energia_media": 0.1}, False),
-        ("Socorro, caí!", {"energia_max": 0.8, "duracao": 1}, True),
-        ("Quando eu era jovem, eu dançava com meu marido.", {"energia_media": 0.05}, False),
-        ("Meu pai me ensinou a trabalhar. Ele era muito bom.", {"energia_media": 0.05}, False),
+        ("Bom dia, como você está?", {"energia_media": 0.02}, {}, False),
+        ("Não estou sentindo dor", {"energia_media": 0.05}, {}, False),
+        ("Preciso ir para casa.", {"energia_media": 0.1}, {}, False),
+        ("Socorro, caí!", {"energia_max": 0.8, "duracao": 1}, {"angulo_corpo": 80, "velocidade_queda": 0.8}, True),
+        ("Quando eu era jovem, eu dançava com meu marido.", {"energia_media": 0.05}, {}, False),
     ]
     
-    for texto, features, movimento in testes:
+    for texto, fa, fv, mov in testes:
         print(f"\n{'='*60}")
         print(f"[Entrada] '{texto}'")
-        resultado = orq.processar(texto, features, movimento)
+        resultado = orq.processar(texto, fa, fv, mov)
         print(f"[Nível] {resultado['nivel']} - {resultado.get('nivel_nome', '')}")
+        if resultado.get("confianca"):
+            print(f"[Confiança] {resultado['confianca']}")
         if resultado.get("resposta"):
             print(f"[Resposta] {resultado['resposta']}")
         if resultado.get("memoria"):
             m = resultado["memoria"]
-            print(f"[Memória GRAVADA] '{m['titulo']}' (confiança: {m['confianca']:.2f})")
+            print(f"[Memória GRAVADA] '{m['titulo']}'")
         print(f"[Ações] {[a['tipo'] for a in resultado['acoes']]}")
     
     print(f"\n{'='*60}")

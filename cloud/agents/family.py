@@ -1,13 +1,14 @@
 """
 Libero - Agente de Família
-Notifica, coordena, tranquiliza.
-Nunca culpa o cuidador.
+Notificações honestas com estados verificáveis.
 """
 
 import os
 import json
+import uuid
 import boto3
 from datetime import datetime, timezone
+from enum import Enum
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -19,6 +20,16 @@ TOPIC_ARN = os.getenv("SNS_TOPIC_ARN", "")
 _bedrock = None
 _sns = None
 
+
+class StatusNotificacao(Enum):
+    """Estados reais de uma notificação."""
+    SIMULATED = "simulated"   # Modo dev, não enviado
+    QUEUED = "queued"         # Na fila
+    SENT = "sent"             # Enviado à AWS
+    DELIVERED = "delivered"   # Confirmado pela AWS
+    FAILED = "failed"         # Falhou
+
+
 def _get_bedrock():
     global _bedrock
     if _bedrock is None:
@@ -27,6 +38,7 @@ def _get_bedrock():
         except Exception:
             _bedrock = False
     return _bedrock
+
 
 def _get_sns():
     global _sns
@@ -42,7 +54,7 @@ def _get_sns():
 # GERAÇÃO DE MENSAGEM
 # ============================================================
 
-SYSTEM_PROMPT_FAMILIA = """Você é o Libero, um companheiro para idosos com Alzheimer ou demência.
+SYSTEM_PROMPT_FAMILIA = """Você é o Libero, um companheiro para idosos com Alzheimer.
 
 Sua função AGORA é FAMÍLIA. Você está se comunicando com o cuidador.
 
@@ -53,11 +65,6 @@ Princípios:
 4. Se for emergência, seja direto.
 5. Se for rotina, seja tranquilizador.
 6. Sempre diga que a IA está cuidando.
-
-Exemplos:
-- Emergência: "Ana, seu pai caiu. Câmera ativada. Ele está consciente. SAMU chamado. Você quer falar com ele?"
-- Rotina: "Ana, sua mãe teve um bom dia. Dormiu 7h. Tomou remédio. Teve 1 episódio de agitação às 15h. Passou. Você pode dormir tranquila."
-- Memória: "Ana, sua mãe contou uma história linda sobre o seu pai hoje. Quer ouvir?"
 """
 
 
@@ -66,13 +73,12 @@ def gerar_mensagem_familia(evento, contexto):
     bedrock = _get_bedrock()
     
     if not bedrock:
-        # Fallback offline
         tipo = evento.get("tipo", "rotina")
         urgencia = evento.get("urgencia", "media")
         detalhes = evento.get("detalhes", "")
         
         if urgencia == "alta":
-            return f"Emergência: {detalhes}. Estou cuidando. Você quer falar?"
+            return f"⚠️ EMERGÊNCIA: {detalhes}. Estou cuidando. Você quer falar?"
         elif tipo == "memoria":
             return f"Sua mãe contou uma história hoje. Quer ouvir?"
         else:
@@ -99,41 +105,89 @@ Gere uma mensagem curta e empática para o cuidador."""
 
 
 # ============================================================
-# NOTIFICAÇÃO
+# NOTIFICAÇÃO HONESTA
 # ============================================================
 
 def notificar(evento, contexto):
     """
-    Notifica a família sobre um evento.
-    
-    Args:
-        evento: dict com tipo, urgencia, detalhes
-        contexto: dict com nome, idoso_id
+    Notifica a família com estados verificáveis.
     
     Returns:
-        dict com status
+        dict com:
+        - id: ID único da notificação
+        - status: StatusNotificacao
+        - mensagem: texto enviado
+        - tentativas: número de tentativas
+        - erro: mensagem de erro (se houver)
+        - timestamp: quando foi enviado
     """
+    notif_id = str(uuid.uuid4())[:8]
     mensagem = gerar_mensagem_familia(evento, contexto)
+    timestamp = datetime.now(timezone.utc).isoformat()
+    
+    resultado = {
+        "id": notif_id,
+        "status": StatusNotificacao.QUEUED.value,
+        "mensagem": mensagem,
+        "urgencia": evento.get("urgencia", "media"),
+        "tentativas": 0,
+        "timestamp": timestamp,
+        "erro": None
+    }
     
     sns = _get_sns()
-    if TOPIC_ARN and sns:
+    
+    # Modo simulado: sem SNS configurado
+    if not TOPIC_ARN or not sns:
+        resultado["status"] = StatusNotificacao.SIMULATED.value
+        resultado["motivo"] = "SNS não configurado"
+        print(f"[Libero Família] (SIMULADO) [{notif_id}] {mensagem[:80]}")
+        return resultado
+    
+    # Tentar enviar com retry
+    max_tentativas = 3
+    for tentativa in range(1, max_tentativas + 1):
+        resultado["tentativas"] = tentativa
         try:
-            sns.publish(
+            response = sns.publish(
                 TopicArn=TOPIC_ARN,
                 Subject=f"[Libero] {evento.get('titulo', 'Notificação')}",
-                Message=mensagem
+                Message=mensagem,
+                MessageAttributes={
+                    "urgencia": {
+                        "DataType": "String",
+                        "StringValue": evento.get("urgencia", "media")
+                    },
+                    "notif_id": {
+                        "DataType": "String",
+                        "StringValue": notif_id
+                    }
+                }
             )
-            print(f"[Libero Família] Notificação enviada: {mensagem[:60]}...")
+            
+            message_id = response.get("MessageId")
+            
+            if message_id:
+                resultado["status"] = StatusNotificacao.SENT.value
+                resultado["message_id"] = message_id
+                print(f"[Libero Família] [{notif_id}] ENVIADO (msg_id: {message_id})")
+                return resultado
+            else:
+                # Sem message_id = falha silenciosa
+                resultado["status"] = StatusNotificacao.FAILED.value
+                resultado["erro"] = "SNS não retornou MessageId"
+                
         except Exception as e:
-            print(f"[Libero Família] Erro SNS: {e}")
-    else:
-        print(f"[Libero Família] (simulado) {mensagem}")
+            resultado["erro"] = str(e)
+            print(f"[Libero Família] [{notif_id}] Tentativa {tentativa} falhou: {e}")
+            
+            if tentativa < max_tentativas:
+                import time
+                time.sleep(1 * tentativa)  # Backoff
+            else:
+                resultado["status"] = StatusNotificacao.FAILED.value
     
-    return {
-        "notificado": True,
-        "mensagem": mensagem,
-        "urgencia": evento.get("urgencia", "media")
-    }
+    return resultado
 
 
 # ============================================================
@@ -141,23 +195,21 @@ def notificar(evento, contexto):
 # ============================================================
 
 def gerar_relatorio_diario(historico, contexto):
-    """Gera um relatório diário para a família."""
+    """Gera um relatório diário."""
     total = len(historico)
     emergencias = [h for h in historico if h.get("nivel") == 3]
     intervencoes = [h for h in historico if h.get("nivel") == 2]
     memorias = [h for h in historico if "memoria" in h]
     
-    relatorio = {
+    return {
         "data": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "idoso_id": contexto.get("idoso_id"),
         "total_interacoes": total,
         "emergencias": len(emergencias),
         "intervencoes": len(intervencoes),
         "memorias_gravadas": len(memorias),
-        "resumo": f"{total} interações, {len(emergencias)} emergências, {len(intervencoes)} intervenções, {len(memorias)} memórias gravadas."
+        "resumo": f"{total} interações, {len(emergencias)} emergências, {len(intervencoes)} intervenções, {len(memorias)} memórias."
     }
-    
-    return relatorio
 
 
 # ============================================================
@@ -176,4 +228,7 @@ if __name__ == "__main__":
     for evento in testes:
         print(f"\n[Teste] {evento['tipo']}")
         resultado = notificar(evento, contexto)
+        print(f"  ID: {resultado['id']}")
+        print(f"  Status: {resultado['status']}")
         print(f"  Urgência: {resultado['urgencia']}")
+        print(f"  Tentativas: {resultado['tentativas']}")
