@@ -32,6 +32,26 @@ def test_negacao_ajuda():
     assert resultado["nivel"] != Nivel.EMERGENCIA
 
 
+def test_incapacidade_para_levantar_nao_e_cancelada_pelo_nao():
+    resultado = detectar_emergencia_contextual("Não consigo levantar")
+    assert resultado["nivel"] == Nivel.EMERGENCIA
+
+
+def test_negacao_antiga_nao_apaga_queda_atual():
+    resultado = detectar_emergencia_contextual("Não caí ontem, mas hoje caí")
+    assert resultado["nivel"] == Nivel.EMERGENCIA
+
+
+def test_negacao_separada_por_virgula_nao_apaga_sinal_atual():
+    resultado = detectar_emergencia_contextual("Não caí, eu caí")
+    assert resultado["nivel"] == Nivel.EMERGENCIA
+
+
+def test_negacao_de_dor_nao_vira_sinal_de_emergencia():
+    resultado = detectar_emergencia_contextual("Não sinto dor")
+    assert resultado["nivel"] != Nivel.EMERGENCIA
+
+
 # ============================================================
 # CONTEXTO DE PASSADO
 # ============================================================
@@ -48,6 +68,13 @@ def test_passado_dor():
     assert resultado["nivel"] != Nivel.EMERGENCIA
 
 
+def test_contexto_passado_nao_apaga_sinal_atual():
+    resultado = detectar_emergencia_contextual(
+        "Quando eu era jovem, caí de bicicleta, mas agora não consigo levantar"
+    )
+    assert resultado["nivel"] == Nivel.EMERGENCIA
+
+
 # ============================================================
 # TERCEIROS
 # ============================================================
@@ -56,6 +83,16 @@ def test_terceiro_queda():
     """'Meu filho caiu' NÃO é emergência DO IDOSO."""
     resultado = detectar_emergencia_contextual("Meu filho caiu ontem")
     assert resultado["nivel"] != Nivel.EMERGENCIA
+
+
+def test_sinal_urgente_referente_a_terceiro_nao_vira_emergencia_pessoal():
+    resultado = detectar_emergencia_contextual("Socorro, meu vizinho caiu")
+    assert resultado["nivel"] != Nivel.EMERGENCIA
+
+
+def test_queda_de_terceiro_nao_apaga_queda_da_pessoa():
+    resultado = detectar_emergencia_contextual("Meu filho caiu, eu caí")
+    assert resultado["nivel"] == Nivel.EMERGENCIA
 
 
 # ============================================================
@@ -86,8 +123,8 @@ def test_queda_so_audio_nao_confirma():
     assert resultado["confianca"] < 0.8  # Não deve ser alta
 
 
-def test_queda_multimodal_confirma():
-    """Áudio + visão + movimento CONFIRMA queda."""
+def test_queda_multimodal_sinaliza_escore_heuristico():
+    """Áudio + visão produzem um sinal heurístico que ainda exige verificação."""
     resultado = safety.detectar_queda_multimodal(
         features_audio={"energia_max": 0.8, "duracao": 1},
         features_visao={"angulo_corpo": 80, "velocidade_queda": 0.8},
@@ -140,12 +177,13 @@ def test_nao_chama_samu_sem_certeza():
     assert "chamar_emergencia" not in tipos
 
 
-def test_chama_samu_com_certeza():
-    """Chama SAMU com confiança >= 0.9."""
+def test_propõe_samu_com_escore_alto_sem_executar():
+    """Ações externas são propostas, não executadas."""
     evento = {"detectado": True, "confianca": 0.95, "tipo": "queda"}
     resultado = safety.agir(evento, {"nome": "Test", "camera_autorizada": False})
     tipos = [a["tipo"] for a in resultado["acoes"]]
-    assert "chamar_emergencia" in tipos
+    acao = next(a for a in resultado["acoes"] if a["tipo"] == "chamar_emergencia")
+    assert acao["status"] == "proposta_nao_executada"
 
 
 if __name__ == "__main__":

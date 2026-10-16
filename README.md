@@ -24,15 +24,11 @@ O cuidador tinha saído por 10 minutos.
 
 ## A Solução
 
-**Libero** é um sistema de cuidado 24 horas para idosos com Alzheimer ou demência que vivem em casa.
+**Libero é um protótipo de pesquisa e desenvolvimento** para explorar assistência por voz, percepção local e ferramentas de apoio a cuidadores.
 
-Ele usa **câmera e áudio contínuos** para perceber quedas, tentativas de saída, confusão e crises — e age na hora: **conversa, acalma, orienta ou chama ajuda**.
+O repositório contém módulos de captura, heurísticas de segurança, uma API, armazenamento local e telas web. Os caminhos ainda não formam um serviço autônomo validado. Em particular, os escores não são probabilidades calibradas e as ações de emergência retornadas pelo detector são propostas: esse fluxo não chama o SAMU, não dispara SNS e não abre a câmera automaticamente.
 
-Cada resposta é baseada em **terapia de validação** e **reminiscência**: nunca corrige a realidade do idoso, sempre acolhe a emoção por trás dela.
-
-A família recebe **notificações honestas** e **histórias gravadas automaticamente** — as memórias que o idoso conta viram legado, e o cuidador finalmente pode dormir.
-
-**É a presença que nunca dorme, nunca se irrita e nunca enlouquece.**
+As respostas conversacionais são orientadas por princípios de validação e reminiscência, mas não há avaliação clínica que garanta esse comportamento em todas as respostas do modelo.
 
 ---
 
@@ -44,7 +40,7 @@ A família recebe **notificações honestas** e **histórias gravadas automatica
 ├─────────────────────────────────────────────────────────────┤
 │                                                              │
 │  🎤 ÁUDIO                📷 CÂMERA                          │
-│  (contínuo)              (contínuo)                          │
+│  (quando configurado)    (captura local/endpoint manual)     │
 │      │                       │                               │
 │      └───────────┬───────────┘                               │
 │                  ▼                                            │
@@ -71,44 +67,42 @@ A família recebe **notificações honestas** e **histórias gravadas automatica
 
 | Nível | Quando | O Que Faz |
 | :--- | :--- | :--- |
-| **0 - Observação** | Tudo normal | Ouve, transcreve, arquiva. Não fala. |
-| **1 - Conversa** | Oportunidade | Inicia conversa, valida, pergunta. |
-| **2 - Intervenção** | Confusão, agitação | Acalma, orienta, notifica família. |
-| **3 - Emergência** | Queda, fuga | Ativa câmera, notifica, chama SAMU. |
+| **0 - Observação** | Nenhum sinal reconhecido | O classificador não encontrou um padrão configurado; isso não comprova que esteja tudo bem. |
+| **1 - Conversa** | Entrada textual para conversa | O orquestrador prepara uma resposta. |
+| **2 - Intervenção** | Sinal heurístico acima do limiar | Gera uma resposta e pode listar ações propostas; não as executa. |
+| **3 - Emergência** | Queda ou texto sinalizado | Gera uma resposta e propostas de ação; nenhum serviço de emergência é chamado por esse fluxo. |
 
 ### Os 8 Agentes
 
 | Agente | Função |
 | :--- | :--- |
-| **Companhia** | Conversa usando terapia de validação |
-| **Segurança** | Detecta queda, fuga, agitação |
-| **Memória** | Grava histórias e reminiscências |
-| **Cuidado** | Lembra remédios, água, comida |
-| **Família** | Notifica cuidadores com honestidade |
-| **Saúde** | Correlaciona sintomas (ex: infecção urinária) |
-| **Governança** | Audita decisões, detecta viés, compliance |
-| **Orquestrador** | Coordena todos os agentes |
+| **Companhia** | Prepara respostas de conversa; sem garantia de segurança clínica |
+| **Segurança** | Aplica heurísticas a sinais recebidos; não confirma eventos clínicos |
+| **Memória** | Módulo para histórias e reminiscências; integração ainda parcial |
+| **Cuidado** | Módulo de lembretes; não há agendador/entrega automática |
+| **Família** | Tem integração explícita opcional com SNS; não faz parte do fluxo automático de emergência |
+| **Saúde** | Módulo experimental; não substitui avaliação clínica |
+| **Governança** | Regras e registros de auditoria; não certifica compliance |
+| **Orquestrador** | Coordena partes do fluxo, sem executar ações externas de segurança |
 
 ---
 
 ## Stack Técnica
 
-### O Que Está Implementado
+### Estado verificado no repositório
 
 | Camada | Tecnologia | Status |
 | :--- | :--- | :--- |
-| **Transcrição** | Groq Whisper (large-v3-turbo) | ✅ Funcionando |
-| **LLM** | Groq (Llama) + AWS Bedrock (Claude) | ✅ Funcionando |
-| **Voz (TTS)** | AWS Polly (Camila, neural) | ✅ Funcionando |
-| **Câmera** | OpenCV + MediaPipe | ✅ Funcionando |
-| **Detecção de queda** | Pose estimation (multimodal) | ✅ Testado |
-| **Decisão contextual** | Python (com detecção de negação) | ✅ Testado |
-| **MCP Server** | FastAPI + Streamable HTTP | ✅ Funcionando |
-| **Ferramentas MCP** | 13 tools para Alexa+ | ✅ Testado |
-| **Autenticação** | 3 roles (família, médico, admin) | ✅ Testado |
-| **WebSocket** | Multi-dispositivo em tempo real | ✅ Implementado |
-| **Dashboard** | HTML/CSS/JS puro | ✅ Funcionando |
-| **Testes** | 47 testes (unit + integration + adversarial) | ✅ Passando |
+| **Transcrição** | Groq Whisper e fallback local | Implementação presente; depende de dispositivo, credenciais e serviço disponíveis |
+| **LLM e TTS** | Groq, Bedrock e Polly | Integrações presentes; este teste não comprova disponibilidade externa |
+| **Câmera** | OpenCV e MediaPipe/OpenCV | Captura depende do hardware; heurísticas não foram validadas em ambiente real |
+| **Segurança** | Regras textuais e sinais de áudio/visão | Testes sintéticos; escores não calibrados e captura edge sem fusão temporal robusta |
+| **API e autorização** | FastAPI, sessões e papéis | Testes unitários e smoke ASGI; sessões e limites ficam em memória |
+| **Histórico e tasks** | Arquivos JSON locais | Não usam as tabelas DynamoDB declaradas no CDK |
+| **Notificações** | Cliente SNS opcional | Envio só ocorre pela ferramenta explícita; `sent` significa aceite do SNS, não entrega ao cuidador |
+| **Ações de segurança** | Plano retornado pelo detector | Não chama emergência, não inicia a câmera nem notifica a família automaticamente |
+| **Interface web** | HTML/CSS/JavaScript | Telas de protótipo; Rede e Perfil são locais, e as ações do perfil do idoso são simuladas |
+| **Testes** | `pytest tests/` | Cobrem regras e integrações simuladas; não validam dispositivos, serviços externos ou eficácia clínica |
 
 ### O Que É Roadmap
 
@@ -117,9 +111,9 @@ A família recebe **notificações honestas** e **histórias gravadas automatica
 | Integração com Bee (wearable físico) | Roadmap |
 | Integração com YouTube, Netflix, Spotify | Roadmap |
 | Integração com WhatsApp, Email | Roadmap |
-| Página de memórias (galeria) | Roadmap |
-| Página de tasks/remédios com alarmes | Roadmap |
-| Chat com histórico de conversas | Roadmap |
+| Persistência remota de memórias, rotina e conversas | Roadmap |
+| Alarmes e entrega de tarefas | Roadmap |
+| Convites e roteamento de alertas para a rede de cuidado | Roadmap |
 | Geração de apresentações de memórias | Roadmap |
 | Rede neural terapêutica própria | Roadmap 1-2 anos |
 | Fine-tuning clínico do LLM | Roadmap 3-6 meses |
@@ -129,24 +123,25 @@ A família recebe **notificações honestas** e **histórias gravadas automatica
 
 ## Privacidade e Ética
 
-**Privacy by Design** não é slogan. É arquitetura.
+O repositório contém controles de acesso e opções locais, mas ainda não demonstra garantias de privacidade ou segurança ponta a ponta.
 
 | Camada | O Que Faz |
 | :--- | :--- |
-| **Captura** | VAD: só grava quando há voz. Câmera só em emergência. |
-| **Processamento** | Local (edge). Metadados apenas para a nuvem. |
-| **Armazenamento** | Criptografia end-to-end. Expiração automática. |
-| **Acesso** | Autenticação forte. Log de tudo. Revogação. |
-| **Transparência** | Dashboard mostra exatamente quando a câmera liga. |
+| **Captura** | O listener pode capturar continuamente; a câmera edge e a câmera da API são fluxos separados. |
+| **Processamento** | O áudio pode ser enviado ao provedor de transcrição configurado. Não há garantia de que só metadados saiam do dispositivo. |
+| **Armazenamento** | Histórico e tarefas usam arquivos JSON locais; retenção e criptografia em repouso não são garantidas pelo aplicativo. |
+| **Acesso** | Há autenticação por sessão e papéis; sessões e limites são mantidos em memória. |
+| **Transparência** | A interface ainda não oferece uma visão confiável do estado de todos os sensores. |
 
-**O vídeo nunca sai do dispositivo.** Exceto em emergência confirmada (confiança ≥ 0.9), criptografado.
+**Não há fluxo automático de envio de vídeo para emergência neste protótipo.** Isso não equivale a uma garantia geral de privacidade do dispositivo ou da rede.
 
-### Sobre Câmera 24/7
+### Sobre a câmera
 
-- **Detecção local**: OpenCV + MediaPipe processam no dispositivo.
-- **Nada é enviado à nuvem**: só metadados (tipo do evento, confiança, timestamp).
-- **Vídeo bruto**: só em emergência, com consentimento, expira em 7 dias.
-- **Transparência**: LED visível quando gravando (hardware, quando aplicável).
+- **Detector edge**: OpenCV e, quando disponível, MediaPipe processam no dispositivo.
+- **Transmissão**: o endpoint de câmera pode servir um stream autenticado; confirme a configuração de rede antes de expor.
+- **Retenção**: o aplicativo não implementa retenção de vídeo por sete dias.
+- **Transparência**: o indicador de estado de câmera depende do fluxo usado e não cobre todos os dispositivos.
+- O detector edge e a câmera exposta pela API são instâncias separadas; a interface não confirma o estado do detector edge.
 
 ---
 
@@ -246,15 +241,11 @@ pytest tests/unit/ -v
 pytest tests/integration/ -v
 ```
 
-**47 testes passando**, incluindo:
+Os testes automatizados cobrem regras e integrações simuladas. O número atual deve ser obtido executando `pytest tests/ -v`; esses testes não provam eficácia clínica nem operação com hardware ou serviços externos.
 
-- ✅ Detecção de queda multimodal
-- ✅ Detecção de negação ("não estou sentindo dor" ≠ emergência)
-- ✅ Intenção ≠ comportamento (fuga só com observação)
-- ✅ Escalonamento proporcional (SAMU só com confiança ≥ 0.9)
-- ✅ Correlação de sintomas (infecção urinária)
-- ✅ Auditoria e detecção de viés
-- ✅ 13 ferramentas MCP
+- Regras heurísticas para texto e combinação de sinais informados por chamada; os escores não são calibrados.
+- Testes de autorização, ferramentas e módulos com dependências simuladas.
+- O fluxo de segurança não chama o SAMU nem executa notificações externas.
 
 ---
 
@@ -291,39 +282,28 @@ libero/
 
 ## O Que Torna o Libero Diferente
 
-### 1. Terapia de Validação como Fundamento
+### 1. Princípios de validação como orientação
 
-A maioria dos assistentes de IA para idosos **corrige a realidade**. Isso causa **crises, agressão e choro**.
+Os prompts e módulos tentam seguir princípios de **Terapia de Validação (Naomi Feil)** e **Reminiscência**. Isso não garante que toda saída do modelo siga esses princípios.
 
-O Libero é treinado em **Terapia de Validação (Naomi Feil)** e **Reminiscência**. Ele **nunca** diz:
-- "Você não trabalha mais."
-- "Sua mãe morreu."
-- "Você está em casa."
-
-Ele diz:
+Exemplos de resposta pretendida:
 - "Você trabalhou por muitos anos. Me conta sobre isso."
 - "Sua mãe deve ter sido incrível. Como ela era?"
 - "Me fala da sua casa. Como ela é?"
 
-### 2. Detecção Multimodal com Confiança Calibrada
+### 2. Heurísticas de segurança em evolução
 
-Queda **não é** um som alto. Queda **é** áudio + visão + movimento, combinados.
-
-O Libero só chama SAMU com **confiança ≥ 0.9**. Antes disso, ele **conversa** primeiro.
+Queda não deve ser inferida por um som isolado. Há uma função que combina sinais de áudio e visão recebidos, mas a captura edge ainda não os sincroniza em uma janela temporal robusta. Os escores são regras heurísticas e não têm calibração clínica. Nenhuma chamada ao SAMU é feita automaticamente.
 
 ### 3. Escalonamento Proporcional
 
-O Libero **nunca** chama a polícia por uma frase isolada. Ele **nunca** ativa câmera sem necessidade. Ele **nunca** notifica a família por ruído.
-
-**Ele distingue**: intenção verbal ≠ comportamento observado.
+O detector considera sinais de intenção verbal e de comportamento observado separadamente. A política ainda é heurística e não tem validação clínica; ações externas retornadas são propostas e não são executadas por esse fluxo.
 
 ### 4. Notificação Honesta
 
 A maioria dos sistemas diz "notificado" mesmo quando falha.
 
-O Libero usa **estados reais**: `queued`, `sent`, `delivered`, `failed`, `simulated`.
-
-**A família sabe exatamente o que aconteceu.**
+O módulo de notificação distingue alguns estados de processamento. `sent` indica aceite do SNS, não confirmação de entrega ao cuidador; o fluxo automático de emergência ainda não aciona esse módulo.
 
 ### 5. Governança Integrada
 

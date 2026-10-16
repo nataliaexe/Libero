@@ -137,14 +137,13 @@ async def login_endpoint(req: LoginRequest, request: Request):
 async def logout_endpoint(request: Request):
     """Logout."""
     token = auth.extrair_token(request)
-    if auth.logout(token):
-        response = JSONResponse({"status": "success"})
-        response.delete_cookie(
-            "libero_session", path="/", secure=auth.AMBIENTE == "production",
-            httponly=True, samesite="strict",
-        )
-        return response
-    return JSONResponse({"status": "error", "error": "Sessão inválida"}, status_code=401)
+    encerrada = auth.logout(token)
+    response = JSONResponse({"status": "success", "session_encerrada": encerrada})
+    response.delete_cookie(
+        "libero_session", path="/", secure=auth.AMBIENTE == "production",
+        httponly=True, samesite="strict",
+    )
+    return response
 
 
 @app.get("/auth/me")
@@ -458,7 +457,7 @@ async def enviar_mensagem(idoso_id: str, request: Request):
         return JSONResponse({"error": "Texto excede 2000 caracteres"}, status_code=413)
     
     store = get_store()
-    store.adicionar_mensagem(idoso_id, "idoso", texto)
+    store.adicionar_mensagem(idoso_id, "cuidador", texto)
     
     from cloud.agents import companion
     resposta = companion.conversar(texto, {"nome": idoso_id})

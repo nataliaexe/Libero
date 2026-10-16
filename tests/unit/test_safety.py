@@ -14,7 +14,7 @@ from cloud.agents import safety
 # ============================================================
 
 def test_queda_multimodal_confirma():
-    """Áudio + visão + movimento confirma queda."""
+    """Áudio e sinais visuais produzem um evento para verificação."""
     resultado = safety.detectar_queda_multimodal(
         features_audio={"energia_max": 0.8, "duracao": 1},
         features_visao={"angulo_corpo": 80, "velocidade_queda": 0.8},
@@ -22,6 +22,9 @@ def test_queda_multimodal_confirma():
     )
     assert resultado["detectado"] is True
     assert resultado["confianca"] >= 0.8
+    assert resultado["tipo"] == "queda"
+    assert resultado["score_nao_calibrado"] is True
+    assert "confirmada" not in resultado["razao"].lower()
 
 
 def test_queda_so_audio_nao_confirma():
@@ -39,6 +42,35 @@ def test_objeto_caindo_nao_e_queda():
         features_visao={"angulo_corpo": 0, "velocidade_queda": 0}
     )
     assert resultado["detectado"] is False
+
+
+def test_movimento_generico_nao_e_imobilidade_pos_queda():
+    visao = {"angulo_corpo": 80}
+    sem_movimento = safety.detectar_queda_multimodal(features_visao=visao)
+    com_movimento = safety.detectar_queda_multimodal(
+        features_visao=visao, movimento=True
+    )
+    com_imobilidade = safety.detectar_queda_multimodal(
+        features_visao={**visao, "imobilidade_pos_queda": True}
+    )
+
+    assert com_movimento["confianca"] == sem_movimento["confianca"]
+    assert com_imobilidade["confianca"] > sem_movimento["confianca"]
+
+
+def test_sinal_local_de_queda_chega_ao_detector_integrado():
+    resultado = safety.detectar_queda_multimodal(
+        features_visao={
+            "angulo_corpo": 82,
+            "queda_detectada_edge": True,
+        }
+    )
+
+    assert resultado["detectado"] is True
+    assert resultado["confianca"] == 0.5
+    assert resultado["sinais"] == [
+        {"tipo": "queda_sinalizada_no_edge", "peso": 0.5}
+    ]
 
 
 # ============================================================
@@ -123,6 +155,8 @@ def test_agir_nivel_3_alto():
     assert resultado["nivel"] == 3
     tipos = [a["tipo"] for a in resultado["acoes"]]
     assert "chamar_emergencia" in tipos
+    acao = next(a for a in resultado["acoes"] if a["tipo"] == "chamar_emergencia")
+    assert acao["status"] == "proposta_nao_executada"
 
 
 def test_nao_chama_samu_confianca_media():
@@ -137,3 +171,30 @@ def test_agir_sem_evento():
     evento = {"detectado": False, "confianca": 0.0, "tipo": None}
     resultado = safety.agir(evento, {})
     assert resultado["nivel"] == 0
+
+
+def test_resposta_de_queda_nao_afirma_que_ajuda_foi_chamada(monkeypatch):
+    monkeypatch.setattr(safety, "_get_bedrock", lambda: None)
+    resposta = safety.gerar_resposta_seguranca(
+        {"tipo": "emergencia_texto", "confianca": 0.95},
+        {"nome": "Dona Maria"},
+    )
+    assert "vou chamar" not in resposta.lower()
+    assert "consegue me responder" in resposta.lower()
+
+
+def test_resposta_bedrock_com_acao_nao_executada_vira_fallback(monkeypatch):
+    class FakeBedrock:
+        def invoke_model(self, **kwargs):
+            class Body:
+                def read(self):
+                    return b'{"content":[{"text":"Vou chamar o SAMU agora."}]}'
+            return {"body": Body()}
+
+    monkeypatch.setattr(safety, "_get_bedrock", lambda: FakeBedrock())
+    resposta = safety.gerar_resposta_seguranca(
+        {"tipo": "emergencia_texto", "confianca": 0.95},
+        {"nome": "Dona Maria"},
+    )
+    assert "vou chamar" not in resposta.lower()
+    assert "consegue me responder" in resposta.lower()

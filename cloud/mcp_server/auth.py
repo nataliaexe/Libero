@@ -256,7 +256,7 @@ def autorizar(ferramenta, token):
     permitido = (
         role == "admin"
         or (ferramenta in FERRAMENTAS_MEDICO and role == "medico")
-        or (ferramenta in FERRAMENTAS_FAMILIA and role in {"familia", "medico"})
+        or (ferramenta in FERRAMENTAS_FAMILIA and role == "familia")
         or (ferramenta in FERRAMENTAS_CUIDADOR and role == "familia")
     )
     if not permitido:

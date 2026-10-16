@@ -36,6 +36,19 @@ def test_autorizar_idoso_exige_permissao_especifica():
         auth.logout(token)
 
 
+def test_medico_nao_herda_permissoes_da_familia():
+    sessao = auth.login("medico@libero.com", "senha-teste-medico-14")
+    token = sessao["token"]
+    try:
+        assert auth.autorizar("analisar_saude", token)["role"] == "medico"
+        with pytest.raises(auth.AuthError):
+            auth.autorizar("iniciar_conversa", token)
+        with pytest.raises(auth.AuthError):
+            auth.autorizar("notificar_familia", token)
+    finally:
+        auth.logout(token)
+
+
 def test_argumentos_mcp_nao_podem_mudar_de_idoso():
     sessao = auth.login("ana@libero.com", "senha-teste-cuidador-14")
     token = sessao["token"]

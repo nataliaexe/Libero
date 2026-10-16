@@ -40,6 +40,22 @@ class Orquestrador:
         utc = datetime.now(timezone.utc)
         local = utc + timedelta(hours=self.timezone_offset)
         return local.hour
+
+    def _registrar_chat(self, texto, resposta, nivel, tipo="normal", metadata=None):
+        """Persiste a interação para que o dashboard veja o resultado real."""
+        try:
+            store = get_store()
+            if texto:
+                store.adicionar_mensagem(
+                    self.idoso_id, "idoso", texto, tipo=tipo, metadata=metadata
+                )
+            if resposta:
+                store.adicionar_mensagem(
+                    self.idoso_id, "libero", resposta, tipo=tipo,
+                    metadata={"nivel": nivel, **(metadata or {})},
+                )
+        except Exception as e:
+            print(f"[Libero] Erro ao salvar no chat: {e}")
     
     def processar(self, texto, features_audio=None, features_visao=None, movimento=False):
         """
@@ -69,6 +85,11 @@ class Orquestrador:
                 "razao": emergencia["razao"]
             }
             resultado = safety.agir(evento, self.contexto)
+            resposta = resultado["acoes"][0]["conteudo"] if resultado["acoes"] else None
+            self._registrar_chat(
+                texto, resposta, resultado["nivel"], "emergencia",
+                {"evento": evento["tipo"], "acoes_externas_executadas": False},
+            )
             
             self.historico.append({
                 "timestamp_utc": self._agora_utc(),
@@ -84,7 +105,8 @@ class Orquestrador:
                 "confianca": emergencia["confianca"].value,
                 "evento": evento,
                 "acoes": resultado["acoes"],
-                "resposta": resultado["acoes"][0]["conteudo"] if resultado["acoes"] else None
+                "resposta": resposta,
+                "acoes_externas_executadas": False,
             }
         
         # 2. Verificar segurança multimodal
@@ -105,6 +127,16 @@ class Orquestrador:
         if eventos:
             evento = max(eventos, key=lambda e: e.get("confianca", 0))
             resultado_seguranca = safety.agir(evento, self.contexto)
+            resposta = (
+                resultado_seguranca["acoes"][0]["conteudo"]
+                if resultado_seguranca["acoes"] else None
+            )
+            nivel_resultado = resultado_seguranca["nivel"]
+            tipo_mensagem = "emergencia" if nivel_resultado == 3 else "normal"
+            self._registrar_chat(
+                texto, resposta, nivel_resultado, tipo_mensagem,
+                {"evento": evento.get("tipo"), "acoes_externas_executadas": False},
+            )
             
             self.historico.append({
                 "timestamp_utc": self._agora_utc(),
@@ -118,7 +150,8 @@ class Orquestrador:
                 "nivel_nome": f"NIVEL_{resultado_seguranca['nivel']}",
                 "evento": evento,
                 "acoes": resultado_seguranca["acoes"],
-                "resposta": resultado_seguranca["acoes"][0]["conteudo"] if resultado_seguranca["acoes"] else None
+                "resposta": resposta,
+                "acoes_externas_executadas": False,
             }
         
         # 3. Verificar memória
@@ -151,6 +184,12 @@ class Orquestrador:
             "nivel": nivel.value,
             "nivel_nome": nivel.name
         })
+
+        tipo_mensagem = "memoria" if memoria_gravada else "normal"
+        self._registrar_chat(
+            texto, resposta, nivel.value, tipo_mensagem,
+            {"memoria_id": memoria_gravada.get("id")} if memoria_gravada else None,
+        )
         
         return {
             "nivel": nivel.value,
@@ -158,46 +197,9 @@ class Orquestrador:
             "nivel_descricao": descrever_nivel(nivel),
             "resposta": resposta,
             "memoria": memoria_gravada,
-            "acoes": [{"tipo": "voz", "conteudo": resposta}] if resposta else []
+            "acoes": [{"tipo": "voz", "conteudo": resposta, "status": "preparada"}] if resposta else [],
+            "acoes_externas_executadas": False,
         }
-        
-        # Salvar no chat store
-        try:
-            store = get_store()
-            if texto:
-                store.adicionar_mensagem(self.idoso_id, "idoso", texto)
-            if resposta:
-                tipo_msg = "normal"
-                if nivel.value == 3:
-                    tipo_msg = "emergencia"
-                elif memoria_gravada:
-                    tipo_msg = "memoria"
-                store.adicionar_mensagem(
-                    self.idoso_id, "libero", resposta,
-                    tipo=tipo_msg,
-                    metadata={"nivel": nivel.value, "nivel_nome": nivel.name}
-                )
-        except Exception as e:
-            print(f"[Libero] Erro ao salvar no chat: {e}")
-        
-        # Salvar no chat store
-        try:
-            store = get_store()
-            if texto:
-                store.adicionar_mensagem(self.idoso_id, "idoso", texto)
-            if resposta:
-                tipo_msg = "normal"
-                if nivel.value == 3:
-                    tipo_msg = "emergencia"
-                elif memoria_gravada:
-                    tipo_msg = "memoria"
-                store.adicionar_mensagem(
-                    self.idoso_id, "libero", resposta,
-                    tipo=tipo_msg,
-                    metadata={"nivel": nivel.value, "nivel_nome": nivel.name}
-                )
-        except Exception as e:
-            print(f"[Libero] Erro ao salvar no chat: {e}")
     
     def resumo(self):
         return {

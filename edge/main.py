@@ -124,7 +124,10 @@ class Libero:
         
         threading.Thread(
             target=self._processar,
-            args=(texto, {}, {}),
+            args=(texto, {
+                "energia_rms": evento.get("energia", 0),
+                "duracao": evento.get("duracao", 0),
+            }, {}),
             daemon=True
         ).start()
     
@@ -154,7 +157,13 @@ class Libero:
         if self.falando:
             return
         
-        features_visao = evento.get("dados", {})
+        dados = evento.get("dados", {})
+        features_visao = {
+            "angulo_corpo": dados.get("angulo", dados.get("angulo_corpo", 0)),
+            "variacao_angular": dados.get("variacao", 0),
+            "movimento_observado": tipo == "movimento",
+            "queda_detectada_edge": tipo == "queda",
+        }
         
         threading.Thread(
             target=self._processar,
@@ -173,7 +182,7 @@ class Libero:
                 texto,
                 features_audio=features_audio,
                 features_visao=features_visao,
-                movimento=features_visao.get("angulo_corpo", 0) > 0
+                movimento=features_visao.get("movimento_observado", False)
             )
             
             nivel = resultado.get("nivel", 0)

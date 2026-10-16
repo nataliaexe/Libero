@@ -31,20 +31,21 @@ EMERGENCIA_PALAVRAS = {
     "me machuquei": 1.0,
     "nao consigo levantar": 1.0,
     "nao consigo respirar": 1.0,
-    "nao sinto": 0.8,
+    "nao sinto as pernas": 0.8,
+    "nao sinto um lado do corpo": 0.8,
+    "nao sinto o braco": 0.8,
     "quebrei": 0.9,
     "cai": 0.7,
+    "caiu": 0.7,
+    "caindo": 0.7,
+    "caido": 0.7,
+    "queda": 0.9,
+    "desabei": 0.9,
+    "tombou": 0.7,
     "sangue": 0.8,
     "dor": 0.5,
     "ajuda": 0.4,
 }
-
-# Negação (cancela emergência)
-NEGACOES = [
-    "nao", "nunca", "jamais", "sem",
-    "nem", "tampouco", "nenhum", "nenhuma",
-    "nao estou", "nao tenho", "nao sinto"
-]
 
 # Contexto de passado
 PASSADO = [
@@ -55,7 +56,8 @@ PASSADO = [
 # Terceiros
 TERCEIROS = [
     "meu filho", "minha filha", "meu neto", "minha neta",
-    "ele", "ela", "o vizinho", "a vizinha"
+    "meu vizinho", "minha vizinha", "o vizinho", "a vizinha",
+    "ele", "ela"
 ]
 
 
@@ -77,47 +79,50 @@ def _normalizar(texto):
     return texto
 
 
-def _tem_negacao_proxima(texto_norm, palavra_norm, janela=7):
-    """
-    Verifica se há negação próxima à palavra.
-    
-    Janela ampliada para 7 palavras (era 5).
-    """
-    palavras = texto_norm.split()
-    try:
-        idx = palavras.index(palavra_norm)
-    except ValueError:
-        # Tentar encontrar em frases de múltiplas palavras
-        for i, w in enumerate(palavras):
-            if palavra_norm.split()[0] in w:
-                idx = i
-                break
-        else:
-            return False
-    
-    inicio = max(0, idx - janela)
-    contexto = " ".join(palavras[inicio:idx])
-    
-    # Verificar negações simples
-    for neg in NEGACOES:
-        if neg in contexto.split() or neg in contexto:
-            return True
-    
-    # Verificar negação direta antes (palavra anterior)
-    if idx > 0:
-        palavra_anterior = palavras[idx - 1]
-        if palavra_anterior in ["nao", "nunca", "jamais", "sem", "nem"]:
-            return True
-    
-    return False
+def _fragmentos(texto_norm):
+    """Divide contrastes para uma negação ou passado não apagar outro fato."""
+    return [
+        parte.strip()
+        for parte in re.split(r"[;.!?]+|\b(?:mas|por[eé]m|agora|hoje)\b", texto_norm)
+        if parte.strip()
+    ]
+
+
+def _ocorrencias(fragmento, termo):
+    padrao = re.escape(termo).replace(r"\ ", r"\s+")
+    return list(re.finditer(rf"(?<!\w){padrao}(?!\w)", fragmento))
+
+
+def _negacao_aplica(fragmento, termo, ocorrencia):
+    # Expressões como "não consigo levantar" descrevem incapacidade, não negação.
+    if termo.startswith("nao "):
+        return False
+    trecho = re.split(r"[,;.!?]+|\b(?:mas|por[eé]m|agora|hoje)\b", fragmento[:ocorrencia.start()])[-1]
+    anteriores = trecho.split()
+    return any(
+        palavra in {"nao", "nunca", "jamais", "sem", "nem"}
+        for palavra in anteriores[-3:]
+    )
 
 
 def _tem_contexto_passado(texto_norm):
-    return any(p in texto_norm for p in PASSADO)
+    return any(re.search(rf"(?<!\w){re.escape(p)}(?!\w)", texto_norm) for p in PASSADO)
 
 
 def _tem_terceiros(texto_norm):
-    return any(t in texto_norm for t in TERCEIROS)
+    return any(re.search(rf"(?<!\w){re.escape(t)}(?!\w)", texto_norm) for t in TERCEIROS)
+
+
+def _ocorrencia_de_terceiro(fragmento, ocorrencia):
+    palavras = fragmento.split()
+    indice = len(fragmento[:ocorrencia.start()].split())
+    inicio = max(0, indice - 3)
+    fim = min(len(palavras), indice + 4)
+    contexto_proximo = " ".join(palavras[inicio:fim])
+    return any(
+        re.search(rf"(?<!\w){re.escape(marcador)}(?!\w)", contexto_proximo)
+        for marcador in TERCEIROS
+    )
 
 
 def detectar_emergencia_contextual(texto):
@@ -136,62 +141,34 @@ def detectar_emergencia_contextual(texto):
             "razao": "Texto vazio"
         }
     
-    # Contexto global
-    passado = _tem_contexto_passado(texto_norm)
-    terceiros = _tem_terceiros(texto_norm)
-    
     evidencias = []
     score_total = 0.0
     
-    # Analisar cada palavra-chave
-    for palavra, peso in EMERGENCIA_PALAVRAS.items():
-        palavra_norm = _remover_acentos(palavra)
-        
-        if palavra_norm not in texto_norm:
-            continue
-        
-        # 1. Verificar negação (cancela)
-        if _tem_negacao_proxima(texto_norm, palavra_norm):
-            evidencias.append({
-                "palavra": palavra,
-                "peso": 0.0,
-                "negada": True,
-                "razao": "Negação detectada"
-            })
-            continue
-        
-        # 2. Contexto de passado (reduz)
-        if passado:
-            peso_ajustado = peso * 0.2
-            evidencias.append({
-                "palavra": palavra,
-                "peso": peso_ajustado,
-                "negada": False,
-                "razao": "Contexto de passado"
-            })
-            score_total += peso_ajustado
-            continue
-        
-        # 3. Terceiros (reduz)
-        if terceiros:
-            peso_ajustado = peso * 0.3
-            evidencias.append({
-                "palavra": palavra,
-                "peso": peso_ajustado,
-                "negada": False,
-                "razao": "Contexto de terceiros"
-            })
-            score_total += peso_ajustado
-            continue
-        
-        # 4. Emergência direta
-        evidencias.append({
-            "palavra": palavra,
-            "peso": peso,
-            "negada": False,
-            "razao": "Emergência direta"
-        })
-        score_total += peso
+    for fragmento in _fragmentos(texto_norm):
+        passado = _tem_contexto_passado(fragmento)
+        for palavra, peso in EMERGENCIA_PALAVRAS.items():
+            palavra_norm = _remover_acentos(palavra)
+            for ocorrencia in _ocorrencias(fragmento, palavra_norm):
+                if _negacao_aplica(fragmento, palavra_norm, ocorrencia):
+                    evidencias.append({
+                        "palavra": palavra, "peso": 0.0, "negada": True,
+                        "razao": "Negação próxima no mesmo trecho",
+                    })
+                    continue
+
+                terceiro = _ocorrencia_de_terceiro(fragmento, ocorrencia)
+                fator = 0.2 if passado else 0.2 if terceiro else 1.0
+                peso_ajustado = peso * fator
+                razao = (
+                    "Contexto de passado" if passado
+                    else "Contexto de terceiros" if terceiro
+                    else "Sinal textual"
+                )
+                evidencias.append({
+                    "palavra": palavra, "peso": peso_ajustado,
+                    "negada": False, "razao": razao,
+                })
+                score_total += peso_ajustado
     
     # Decisão
     if score_total >= 0.9:
@@ -199,6 +176,8 @@ def detectar_emergencia_contextual(texto):
             "nivel": Nivel.EMERGENCIA,
             "confianca": Confianca.ALTA,
             "evidencias": evidencias,
+            "score_sinais": score_total,
+            "score_nao_calibrado": True,
             "razao": f"Score: {score_total:.2f}"
         }
     elif score_total >= 0.5:
@@ -206,6 +185,8 @@ def detectar_emergencia_contextual(texto):
             "nivel": Nivel.EMERGENCIA,
             "confianca": Confianca.MEDIA,
             "evidencias": evidencias,
+            "score_sinais": score_total,
+            "score_nao_calibrado": True,
             "razao": f"Possível emergência. Score: {score_total:.2f}"
         }
     elif score_total > 0:
@@ -213,6 +194,8 @@ def detectar_emergencia_contextual(texto):
             "nivel": Nivel.INTERVENCAO,
             "confianca": Confianca.BAIXA,
             "evidencias": evidencias,
+            "score_sinais": score_total,
+            "score_nao_calibrado": True,
             "razao": f"Sinais fracos. Score: {score_total:.2f}"
         }
     
@@ -220,6 +203,8 @@ def detectar_emergencia_contextual(texto):
         "nivel": Nivel.OBSERVACAO,
         "confianca": Confianca.BAIXA,
         "evidencias": [],
+        "score_sinais": 0.0,
+        "score_nao_calibrado": True,
         "razao": "Nenhum sinal de emergência"
     }
 

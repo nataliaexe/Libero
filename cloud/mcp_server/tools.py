@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from cloud.agents import companion, safety, memory, care, family, health, governance
 from cloud.knowledge import therapy, crisis, stages
+from edge.decision.levels import Nivel, detectar_emergencia_contextual
 
 
 # ============================================================
@@ -74,41 +75,68 @@ def iniciar_conversa(idoso_id, mensagem, contexto=None):
             "idoso_id": {"type": "string"},
             "texto": {"type": "string"},
             "features": {"type": "object"},
+            "features_audio": {"type": "object"},
+            "features_visao": {"type": "object"},
             "movimento": {"type": "boolean"}
         },
         "required": ["idoso_id"]
     }
 )
-def verificar_seguranca(idoso_id, texto="", features=None, movimento=False):
-    features = features or {}
+def verificar_seguranca(
+    idoso_id, texto="", features=None, features_audio=None,
+    features_visao=None, movimento=False,
+):
+    features_audio = features_audio if isinstance(features_audio, dict) else features
+    features_audio = features_audio if isinstance(features_audio, dict) else {}
+    features_visao = features_visao if isinstance(features_visao, dict) else {}
     eventos = []
-    
-    queda = safety.detectar_queda(features)
+
+    emergencia = detectar_emergencia_contextual(texto)
+    if emergencia["nivel"] == Nivel.EMERGENCIA:
+        eventos.append({
+            "detectado": True,
+            "confianca": 0.9 if emergencia["confianca"].value == "alta" else 0.7,
+            "score_nao_calibrado": True,
+            "tipo": "emergencia_texto",
+            "razao": emergencia["razao"],
+        })
+
+    queda = safety.detectar_queda_multimodal(
+        features_audio, features_visao, movimento
+    )
     if queda["detectado"]:
         eventos.append(queda)
-    
+
     fuga = safety.detectar_fuga(texto, datetime.now().hour, movimento)
     if fuga["detectado"]:
         eventos.append(fuga)
-    
-    agitacao = safety.detectar_agitacao(features, texto)
+
+    agitacao = safety.detectar_agitacao(features_audio, texto)
     if agitacao["detectado"]:
         eventos.append(agitacao)
     
     if not eventos:
-        return {"evento": None, "nivel": 0}
+        return {"evento": None, "nivel": 0, "acoes_externas_executadas": False}
     
-    evento = max(eventos, key=lambda e: e["confianca"])
+    evento = max(eventos, key=lambda e: e.get("confianca", 0))
     resultado = safety.agir(evento, {"idoso_id": idoso_id})
     
     governance.Governanca().auditar(
         "safety", "verificar_seguranca",
         {"idoso_id": idoso_id, "evento": evento},
         resultado,
-        razao=f"Evento {evento['tipo']} com confiança {evento['confianca']}"
+        razao=(
+            f"Evento {evento['tipo']} com escore heurístico "
+            f"{evento['confianca']} (não calibrado)"
+        )
     )
     
-    return {"evento": evento, "nivel": resultado["nivel"], "acoes": resultado["acoes"]}
+    return {
+        "evento": evento,
+        "nivel": resultado["nivel"],
+        "acoes": resultado["acoes"],
+        "acoes_externas_executadas": False,
+    }
 
 
 # ============================================================

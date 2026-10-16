@@ -1,6 +1,6 @@
 """
 Libero - Agente de Segurança
-Detecção multimodal com confiança calibrada.
+Detecção multimodal por escores heurísticos não calibrados.
 
 Compatível com API antiga (detectar_queda, detectar_fuga) e nova
 (detectar_queda_multimodal).
@@ -8,6 +8,7 @@ Compatível com API antiga (detectar_queda, detectar_fuga) e nova
 
 import os
 import json
+import re
 import boto3
 from datetime import datetime, timezone
 from dotenv import load_dotenv
@@ -38,16 +39,19 @@ def detectar_queda_multimodal(features_audio=None, features_visao=None, moviment
     """
     Detecta queda combinando múltiplos sinais.
     
-    Regra: áudio SOZINHO nunca confirma queda (confiança máx 0.3).
+    Áudio sozinho nunca marca uma queda como detectada. O escore é uma
+    heurística para priorizar verificação, não uma probabilidade calibrada.
     """
-    features_audio = features_audio or {}
-    features_visao = features_visao or {}
+    features_audio = features_audio if isinstance(features_audio, dict) else {}
+    features_visao = features_visao if isinstance(features_visao, dict) else {}
     
     sinais = []
     score = 0.0
     
     # Sinal 1: Áudio (peso baixo sozinho)
-    energia_max = features_audio.get("energia_max", 0)
+    energia_max = features_audio.get(
+        "energia_rms", features_audio.get("energia_max", 0)
+    )
     duracao = features_audio.get("duracao", 0)
     
     if energia_max > 0.7 and duracao < 2:
@@ -57,43 +61,49 @@ def detectar_queda_multimodal(features_audio=None, features_visao=None, moviment
         sinais.append({"tipo": "audio_medio_curto", "peso": 0.15})
         score += 0.15
     
-    # Sinal 2: Visão (ângulo)
+    # A detecção local é tratada como um indício único, sem contar de novo
+    # o mesmo ângulo usado pelo detector da câmera.
+    local_detectou = features_visao.get("queda_detectada_edge") is True
     angulo = features_visao.get("angulo_corpo", 0)
-    if angulo > 75:
-        sinais.append({"tipo": "corpo_deitado", "peso": 0.4})
-        score += 0.4
-    elif angulo > 60:
-        sinais.append({"tipo": "corpo_inclinado", "peso": 0.2})
-        score += 0.2
-    
-    # Sinal 3: Velocidade de queda
-    velocidade = features_visao.get("velocidade_queda", 0)
-    if velocidade > 0.7:
-        sinais.append({"tipo": "queda_rapida", "peso": 0.3})
-        score += 0.3
-    elif velocidade > 0.5:
-        sinais.append({"tipo": "queda_media", "peso": 0.15})
-        score += 0.15
-    
-    # Sinal 4: Imobilidade pós-queda
-    if movimento and angulo > 60:
-        sinais.append({"tipo": "imobilidade_pos_queda", "peso": 0.2})
-        score += 0.2
+    if local_detectou:
+        sinais.append({"tipo": "queda_sinalizada_no_edge", "peso": 0.5})
+        score += 0.5
+    else:
+        if angulo > 75:
+            sinais.append({"tipo": "corpo_deitado", "peso": 0.4})
+            score += 0.4
+        elif angulo > 60:
+            sinais.append({"tipo": "corpo_inclinado", "peso": 0.2})
+            score += 0.2
+
+        velocidade = features_visao.get("velocidade_queda", 0)
+        if velocidade > 0.7:
+            sinais.append({"tipo": "queda_rapida", "peso": 0.3})
+            score += 0.3
+        elif velocidade > 0.5:
+            sinais.append({"tipo": "queda_media", "peso": 0.15})
+            score += 0.15
+
+        if features_visao.get("imobilidade_pos_queda") is True and angulo > 60:
+            sinais.append({"tipo": "imobilidade_pos_queda", "peso": 0.2})
+            score += 0.2
     
     detectado = score >= 0.5
     
     if score >= 0.8:
-        razao = "Queda confirmada"
+        razao = "Múltiplos sinais compatíveis; requer verificação"
     elif score >= 0.5:
-        razao = "Possível queda"
+        razao = "Sinais compatíveis; requer verificação"
     elif score > 0:
         razao = "Sinais fracos"
     else:
         razao = "Sem sinal"
     
     return {
+        "tipo": "queda" if detectado else None,
         "detectado": detectado,
         "confianca": min(score, 1.0),
+        "score_nao_calibrado": True,
         "sinais": sinais,
         "razao": razao
     }
@@ -236,7 +246,23 @@ Princípios:
 4. Preserve a autonomia.
 5. Se for emergência, seja claro.
 6. Se for só intenção, dialogue.
+7. Não afirme que chamou alguém, abriu câmera ou acionou serviço; essas ações não são executadas aqui.
+8. Faça perguntas simples e peça que um cuidador verifique a situação.
 """
+
+
+def _resposta_local(tipo, nome, confianca):
+    if tipo in ["queda", "queda_audio_suspeito"]:
+        return f"{nome}, estou aqui com você. Consegue me responder? Um cuidador precisa verificar como você está."
+    if tipo in ["fuga", "fuga_noturna"]:
+        if confianca >= 0.8:
+            return f"{nome}, espere. Vamos conversar antes. Senta aqui comigo."
+        return f"{nome}, onde você vai? Me conta."
+    if tipo == "emergencia_texto":
+        return f"{nome}, estou aqui com você. Consegue me responder? Se puder, peça ao cuidador para verificar você."
+    if tipo == "agitacao":
+        return f"{nome}, está tudo bem. Me conta o que está sentindo."
+    return f"{nome}, estou aqui. Está tudo bem."
 
 
 def gerar_resposta_seguranca(evento, contexto):
@@ -247,21 +273,7 @@ def gerar_resposta_seguranca(evento, contexto):
     confianca = evento.get("confianca", 0)
     
     if not bedrock:
-        if tipo in ["queda", "queda_audio_suspeito"]:
-            if confianca >= 0.8:
-                return f"{nome}, estou aqui. Não se mexa. Vou chamar ajuda."
-            else:
-                return f"{nome}, você está bem? Pode me responder?"
-        elif tipo in ["fuga", "fuga_noturna"]:
-            if confianca >= 0.8:
-                return f"{nome}, espere. Vamos conversar antes. Senta aqui comigo."
-            else:
-                return f"{nome}, onde você vai? Me conta."
-        elif tipo == "emergencia_texto":
-            return f"{nome}, estou aqui. Não se preocupe. Vou chamar ajuda."
-        elif tipo == "agitacao":
-            return f"{nome}, está tudo bem. Me conta o que está sentindo."
-        return f"{nome}, estou aqui. Está tudo bem."
+        return _resposta_local(tipo, nome, confianca)
     
     prompt = f"""Evento: {tipo}
 Confiança: {confianca:.2f}
@@ -279,10 +291,17 @@ Gere uma resposta curta, calma e respeitosa."""
     try:
         response = bedrock.invoke_model(modelId=MODEL_ID, body=json.dumps(body))
         resultado = json.loads(response["body"].read())
-        return resultado["content"][0]["text"].strip()
+        texto = resultado["content"][0]["text"].strip()
+        alegacao_de_acao = re.search(
+            r"\b(?:vou|estou|já|acionei|chamei|avisei|notifiquei)\b"
+            r".{0,50}\b(?:ajuda|samu|família|cuidador|emergência|câmera)\b",
+            texto,
+            re.IGNORECASE | re.DOTALL,
+        )
+        return _resposta_local(tipo, nome, confianca) if alegacao_de_acao else texto
     except Exception as e:
         print(f"[Libero Segurança] Erro Bedrock: {e}")
-        return f"{nome}, estou aqui. Está tudo bem."
+        return _resposta_local(tipo, nome, confianca)
 
 
 # ============================================================
@@ -291,9 +310,9 @@ Gere uma resposta curta, calma e respeitosa."""
 
 def agir(evento, contexto):
     """
-    Toma ação com escalonamento proporcional.
-    
-    Regra: SAMU/polícia só com confiança >= 0.9.
+    Monta um plano de ação proporcional; não executa serviços externos.
+
+    Os limiares usam escore heurístico e não representam probabilidades.
     """
     acoes = []
     
@@ -305,29 +324,50 @@ def agir(evento, contexto):
     
     # Voz SEMPRE
     resposta = gerar_resposta_seguranca(evento, contexto)
-    acoes.append({"tipo": "voz", "conteudo": resposta, "confianca": confianca})
+    acoes.append({
+        "tipo": "voz", "conteudo": resposta, "confianca": confianca,
+        "status": "preparada",
+    })
     
     # Nível 3 - Emergência (confiança >= 0.8)
     if confianca >= 0.8:
-        acoes.append({"tipo": "notificar_familia", "urgencia": "alta"})
+        acoes.append({
+            "tipo": "notificar_familia", "urgencia": "alta",
+            "status": "proposta_nao_executada",
+        })
         
         if contexto.get("camera_autorizada", True):
-            acoes.append({"tipo": "ativar_camera", "local": contexto.get("local")})
+            acoes.append({
+                "tipo": "ativar_camera", "local": contexto.get("local"),
+                "status": "proposta_nao_executada",
+            })
         
         # SAMU só com confiança >= 0.9
         if confianca >= 0.9:
             if tipo in ["queda", "emergencia_texto", "queda_audio_suspeito"]:
-                acoes.append({"tipo": "chamar_emergencia", "servico": "samu"})
+                acoes.append({
+                    "tipo": "chamar_emergencia", "servico": "samu",
+                    "status": "proposta_nao_executada",
+                })
             elif tipo in ["fuga", "fuga_noturna"]:
-                acoes.append({"tipo": "aguardar_retorno", "minutos": 15})
+                acoes.append({
+                    "tipo": "aguardar_retorno", "minutos": 15,
+                    "status": "proposta_nao_executada",
+                })
         else:
-            acoes.append({"tipo": "monitorar_intensamente", "duracao_min": 5})
+            acoes.append({
+                "tipo": "monitorar_intensamente", "duracao_min": 5,
+                "status": "proposta_nao_executada",
+            })
         
         return {"acoes": acoes, "nivel": 3, "confianca": confianca}
     
     # Nível 2 - Intervenção (0.5-0.8)
     if confianca >= 0.5:
-        acoes.append({"tipo": "notificar_familia", "urgencia": "media"})
+        acoes.append({
+            "tipo": "notificar_familia", "urgencia": "media",
+            "status": "proposta_nao_executada",
+        })
         return {"acoes": acoes, "nivel": 2, "confianca": confianca}
     
     return {"acoes": acoes, "nivel": 1, "confianca": confianca}
