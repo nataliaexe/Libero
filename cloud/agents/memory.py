@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 REGION = os.getenv("AWS_REGION", "us-east-1")
-MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
+MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "").strip()
 BUCKET = os.getenv("S3_BUCKET", "")
 MEMORY_DIR = Path.home() / "libero" / "data" / "memorias"
 _memory_lock = Lock()
@@ -26,6 +26,8 @@ _s3 = None
 
 def _get_bedrock():
     global _bedrock
+    if not MODEL_ID:
+        return None
     if _bedrock is None:
         try:
             _bedrock = boto3.client("bedrock-runtime", region_name=REGION)
@@ -62,7 +64,10 @@ def detectar_historia(texto):
         "minha esposa", "meus filhos", "eu morava",
         "eu estudava", "eu brincava", "eu dançava",
         "me ensinou", "eu aprendi", "eu fiz", "eu fui",
-        "eu tinha", "a gente", "nós"
+        "eu tinha", "a gente", "nós",
+        "when i was", "when we were", "i used to", "we used to",
+        "my father", "my mother", "my husband", "my wife", "my children",
+        "i grew up", "i lived", "i worked", "i learned", "i remember",
     ]
     
     score = 0
@@ -78,7 +83,9 @@ def detectar_historia(texto):
     verbos_passado = [
         "era", "foi", "tinha", "fazia", "morava",
         "trabalhava", "dançava", "brincava", "estudava",
-        "conheci", "aprendi", "ensinou"
+        "conheci", "aprendi", "ensinou", "was", "were", "used to",
+        "lived", "worked", "danced", "studied", "learned", "taught",
+        "grew up", "remember"
     ]
     if any(v in texto_lower for v in verbos_passado):
         score += 0.2
@@ -106,6 +113,11 @@ Retorne APENAS um JSON válido:
 }
 """
 
+SYSTEM_PROMPT_MEMORIA_EN = """You are Libero. Extract the essence of the person's story.
+Return only valid JSON with these keys: title, summary, people, places, emotion, tags.
+Write the title, summary, emotion, and tags in natural English. Keep the original meaning.
+"""
+
 
 def organizar_historia(texto, contexto):
     """Organiza uma história usando Bedrock."""
@@ -122,15 +134,23 @@ def organizar_historia(texto, contexto):
             "tags": []
         }
     
-    prompt = f"""História contada por {contexto.get('nome', 'idoso')}:
+    idioma = str(contexto.get("language", "pt-BR")).lower()
+    if idioma.startswith("en"):
+        system_prompt = SYSTEM_PROMPT_MEMORIA_EN
+        prompt = f"""Story told by {contexto.get('nome', 'the person')}:
 "{texto}"
 
-Retorne APENAS o JSON."""
-    
+Return only the requested JSON."""
+    else:
+        system_prompt = SYSTEM_PROMPT_MEMORIA
+        prompt = f"""História contada por {contexto.get('nome', 'idoso')}:
+"{texto}"
+
+Retorne apenas o JSON solicitado."""
     body = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens": 500,
-        "system": SYSTEM_PROMPT_MEMORIA,
+        "system": system_prompt,
         "messages": [{"role": "user", "content": prompt}]
     }
     
@@ -172,6 +192,7 @@ def gravar_memoria(idoso_id, texto, contexto):
     
     memoria = {
         "idoso_id": idoso_id,
+        "language": contexto.get("language", "pt-BR"),
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "texto_original": texto,
         "titulo": organizada.get("titulo", "História"),
@@ -231,6 +252,21 @@ def gravar_memoria(idoso_id, texto, contexto):
     print(f"[Libero Memória] Salvo localmente: {memoria['titulo']}")
     
     return {"gravado": True, "memoria": memoria}
+
+
+def listar_memorias(idoso_id, limite=5):
+    """Load recent saved memories for conversation context."""
+    if not isinstance(idoso_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", idoso_id):
+        raise ValueError("idoso_id inválido")
+    arquivo = MEMORY_DIR / f"{idoso_id}.json"
+    try:
+        with _memory_lock, arquivo.open("r", encoding="utf-8") as handle:
+            memorias = json.load(handle)
+    except FileNotFoundError:
+        return []
+    if not isinstance(memorias, list):
+        return []
+    return [item for item in memorias[-max(1, limite):] if isinstance(item, dict)]
 
 
 if __name__ == "__main__":

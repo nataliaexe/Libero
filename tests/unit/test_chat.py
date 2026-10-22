@@ -17,6 +17,20 @@ def test_chat_store_protege_arquivos_e_valida_id(tmp_path, monkeypatch):
         store.adicionar_mensagem("../fora", "idoso", "Olá")
 
 
+def test_processos_separados_enxergam_historico_atualizado(tmp_path, monkeypatch):
+    monkeypatch.setattr(chat, "DATA_DIR", tmp_path)
+    edge_store = chat.ChatStore()
+    api_store = chat.ChatStore()
+
+    edge_store.adicionar_mensagem("dona-maria", "idoso", "Hello", metadata={"language": "en"})
+    assert api_store.listar_mensagens("dona-maria")[0]["texto"] == "Hello"
+
+    api_store.adicionar_mensagem("dona-maria", "libero", "I hear you.", metadata={"language": "en"})
+    assert [m["texto"] for m in edge_store.listar_mensagens("dona-maria")] == [
+        "I hear you.", "Hello"
+    ]
+
+
 def test_mensagem_enviada_pela_familia_tem_autor_cuidador(monkeypatch):
     class RequestFake:
         headers = {}

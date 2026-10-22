@@ -149,6 +149,28 @@ def test_agir_nivel_2():
     assert len(resultado["acoes"]) >= 2
 
 
+def test_sinal_local_isolado_nao_propõe_notificacao_familiar():
+    evento = {"detectado": True, "confianca": 0.5, "tipo": "queda"}
+
+    resultado = safety.agir(evento, {"nome": "Dona Maria"})
+
+    assert resultado["nivel"] == 1
+    assert "notificar_familia" not in [acao["tipo"] for acao in resultado["acoes"]]
+
+
+def test_queda_validada_no_edge_preserva_confianca_para_escalonamento():
+    resultado = safety.detectar_queda_multimodal(
+        features_visao={
+            "queda_detectada_edge": True,
+            "confianca_queda_edge": 0.9,
+            "metodo_deteccao": "mediapipe",
+        }
+    )
+
+    assert resultado["detectado"] is True
+    assert resultado["confianca"] == 0.9
+
+
 def test_agir_nivel_3_alto():
     evento = {"detectado": True, "confianca": 0.95, "tipo": "queda"}
     resultado = safety.agir(evento, {"nome": "Test", "camera_autorizada": False})
@@ -177,7 +199,7 @@ def test_resposta_de_queda_nao_afirma_que_ajuda_foi_chamada(monkeypatch):
     monkeypatch.setattr(safety, "_get_bedrock", lambda: None)
     resposta = safety.gerar_resposta_seguranca(
         {"tipo": "emergencia_texto", "confianca": 0.95},
-        {"nome": "Dona Maria"},
+        {"nome": "Dona Maria", "language": "pt-BR"},
     )
     assert "vou chamar" not in resposta.lower()
     assert "consegue me responder" in resposta.lower()
@@ -194,7 +216,7 @@ def test_resposta_bedrock_com_acao_nao_executada_vira_fallback(monkeypatch):
     monkeypatch.setattr(safety, "_get_bedrock", lambda: FakeBedrock())
     resposta = safety.gerar_resposta_seguranca(
         {"tipo": "emergencia_texto", "confianca": 0.95},
-        {"nome": "Dona Maria"},
+        {"nome": "Dona Maria", "language": "pt-BR"},
     )
     assert "vou chamar" not in resposta.lower()
     assert "consegue me responder" in resposta.lower()

@@ -53,13 +53,31 @@ def registrar(nome, descricao, schema):
 )
 def iniciar_conversa(idoso_id, mensagem, contexto=None):
     contexto = contexto or {}
-    resposta = companion.conversar(mensagem, contexto)
+    # Run through the same orchestration path used by the edge so MCP calls
+    # produce the same safety checks, memory detection, and conversation record.
+    contexto.setdefault("nome", "Dona Maria")
+    from cloud.agents.orchestrator import Orquestrador
+    resultado = Orquestrador(idoso_id, contexto).processar(mensagem)
+    resposta = resultado.get("resposta")
     governance.Governanca().auditar(
         "companion", "iniciar_conversa",
         {"idoso_id": idoso_id, "mensagem": mensagem},
-        {"resposta": resposta}
+        {
+            "resposta": resposta,
+            "nivel": resultado.get("nivel"),
+            "evento": resultado.get("evento"),
+        }
     )
-    return {"resposta": resposta}
+    return {
+        "resposta": resposta,
+        "idioma": resultado.get("idioma", "en"),
+        "nivel": resultado.get("nivel"),
+        "nivel_nome": resultado.get("nivel_nome"),
+        "provedor_modelo": resultado.get("provedor_modelo"),
+        "memoria": resultado.get("memoria"),
+        "evento": resultado.get("evento"),
+        "acoes_externas_executadas": resultado.get("acoes_externas_executadas", False),
+    }
 
 
 # ============================================================
@@ -372,7 +390,7 @@ def verificar_vies():
 
 @registrar(
     "verificar_compliance",
-    "Verifica compliance com LGPD, GDPR, HIPAA.",
+    "Lista controles de LGPD, GDPR e HIPAA que ainda precisam ser avaliados; não atesta conformidade.",
     {
         "type": "object",
         "properties": {}

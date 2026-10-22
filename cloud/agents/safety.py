@@ -16,13 +16,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 REGION = os.getenv("AWS_REGION", "us-east-1")
-MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
+MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "").strip()
 
 _bedrock = None
 
 
 def _get_bedrock():
     global _bedrock
+    if not MODEL_ID:
+        return None
     if _bedrock is None:
         try:
             _bedrock = boto3.client("bedrock-runtime", region_name=REGION)
@@ -66,8 +68,10 @@ def detectar_queda_multimodal(features_audio=None, features_visao=None, moviment
     local_detectou = features_visao.get("queda_detectada_edge") is True
     angulo = features_visao.get("angulo_corpo", 0)
     if local_detectou:
-        sinais.append({"tipo": "queda_sinalizada_no_edge", "peso": 0.5})
-        score += 0.5
+        confianca_edge = features_visao.get("confianca_queda_edge")
+        peso_edge = 0.5 if confianca_edge is None else min(max(float(confianca_edge), 0.0), 1.0)
+        sinais.append({"tipo": "queda_sinalizada_no_edge", "peso": peso_edge})
+        score += peso_edge
     else:
         if angulo > 75:
             sinais.append({"tipo": "corpo_deitado", "peso": 0.4})
@@ -235,36 +239,52 @@ def detectar_agitacao(features, texto):
 # RESPOSTA
 # ============================================================
 
-SYSTEM_PROMPT_SEGURANCA = """Você é o Libero, companheiro de idosos com Alzheimer.
-
-Função AGORA: SEGURANÇA.
-
-Princípios:
-1. Fale com calma, firmeza e respeito.
-2. NUNCA diga que ele está errado.
-3. NUNCA assuste.
+SYSTEM_PROMPT_SEGURANCA = """You are Libero, a companion for elderly people with Alzheimer's.
+Speak calmly, firmly, and respectfully.
+Principles:
+1. Speak calmly, firmly, and respectfully.
+2. NEVER tell them they are wrong.
+3. NEVER scare them.
 4. Preserve a autonomia.
-5. Se for emergência, seja claro.
-6. Se for só intenção, dialogue.
-7. Não afirme que chamou alguém, abriu câmera ou acionou serviço; essas ações não são executadas aqui.
-8. Faça perguntas simples e peça que um cuidador verifique a situação.
+5. If it is an emergency, be clear.
+6. If it is just an intention, dialogue.
+7. Never claim that you contacted anyone, opened a camera, or dispatched a service unless it happened.
+8. Ask simple questions and encourage a caregiver to check the situation.
 """
 
+SYSTEM_PROMPT_SEGURANCA_PT = """Você é Libero, um companheiro gentil para pessoas idosas.
+Fale com calma, clareza e respeito. Não diga que a pessoa está errada nem a assuste.
+Não afirme que chamou alguém, abriu uma câmera ou acionou um serviço se isso não
+aconteceu. Faça perguntas simples e peça que um cuidador verifique a situação."""
 
-def _resposta_local(tipo, nome, confianca):
-    if tipo in ["queda", "queda_audio_suspeito"]:
-        return f"{nome}, estou aqui com você. Consegue me responder? Um cuidador precisa verificar como você está."
-    if tipo in ["fuga", "fuga_noturna"]:
+
+def _resposta_local(tipo, nome, confianca, language="en"):
+    """Language-matched fallback when Bedrock is unavailable."""
+    nome = nome or "Maria"
+    if str(language).lower().startswith("pt"):
+        if tipo in ["queda", "queda_audio_suspeito", "emergencia_texto"]:
+            return (
+                f"{nome}, você consegue me responder? Fique onde está; estou aqui com você."
+                if confianca >= 0.8 else f"{nome}, você está bem? Consegue me responder?"
+            )
+        if tipo in ["fuga", "fuga_noturna"]:
+            return f"{nome}, vamos conversar um pouco antes de sair. O que você precisa agora?"
+        if tipo == "agitacao":
+            return f"{nome}, estou aqui com você. Pode me contar o que está sentindo?"
+        return f"{nome}, estou aqui com você. Como posso ajudar agora?"
+    if tipo in ["queda", "queda_audio_suspeito", "emergencia_texto"]:
         if confianca >= 0.8:
-            return f"{nome}, espere. Vamos conversar antes. Senta aqui comigo."
-        return f"{nome}, onde você vai? Me conta."
-    if tipo == "emergencia_texto":
-        return f"{nome}, estou aqui com você. Consegue me responder? Se puder, peça ao cuidador para verificar você."
-    if tipo == "agitacao":
-        return f"{nome}, está tudo bem. Me conta o que está sentindo."
-    return f"{nome}, estou aqui. Está tudo bem."
-
-
+            return f"{nome}, I am here with you. Please stay still and answer me."
+        else:
+            return f"{nome}, are you okay? Can you answer me?"
+    elif tipo in ["fuga", "fuga_noturna"]:
+        if confianca >= 0.8:
+            return f"{nome}, please wait. Let's talk first. Sit here with me."
+        else:
+            return f"{nome}, where are you going? Tell me."
+    elif tipo == "agitacao":
+        return f"{nome}, it's okay. Tell me what you are feeling."
+    return f"{nome}, I am here with you. Everything is okay."
 def _limpar_resposta(texto):
     """Remove markdown e limita a 2 frases."""
     import re
@@ -287,9 +307,15 @@ def gerar_resposta_seguranca(evento, contexto):
     nome = contexto.get("nome", "")
     tipo = evento.get("tipo", "unknown")
     confianca = evento.get("confianca", 0)
+    language = contexto.get("language", "en")
+    system_prompt = (
+        SYSTEM_PROMPT_SEGURANCA_PT
+        if str(language).lower().startswith("pt")
+        else SYSTEM_PROMPT_SEGURANCA
+    )
     
     if not bedrock:
-        return _resposta_local(tipo, nome, confianca)
+        return _resposta_local(tipo, nome, confianca, language)
     
     prompt = f"""Evento: {tipo}
 Confiança: {confianca:.2f}
@@ -300,7 +326,7 @@ Gere uma resposta curta, calma e respeitosa."""
     body = {
         "anthropic_version": "bedrock-2023-05-31",
         "max_tokens": 150,
-        "system": SYSTEM_PROMPT_SEGURANCA,
+        "system": system_prompt,
         "messages": [{"role": "user", "content": prompt}]
     }
     
@@ -314,7 +340,7 @@ Gere uma resposta curta, calma e respeitosa."""
         
         # Se a limpeza falhou, usar resposta local
         if not texto_limpo:
-            return _resposta_local(tipo, nome, confianca)
+            return _resposta_local(tipo, nome, confianca, language)
         
         # 2. Bloquear alegações de ação (não deve dizer que está fazendo)
         alegacao_de_acao = re.search(
@@ -324,10 +350,10 @@ Gere uma resposta curta, calma e respeitosa."""
             re.IGNORECASE | re.DOTALL,
         )
         
-        return _resposta_local(tipo, nome, confianca) if alegacao_de_acao else texto_limpo
+        return _resposta_local(tipo, nome, confianca, language) if alegacao_de_acao else texto_limpo
     except Exception as e:
         print(f"[Libero Segurança] Erro Bedrock: {e}")
-        return _resposta_local(tipo, nome, confianca)
+        return _resposta_local(tipo, nome, confianca, language)
 
 
 # ============================================================
@@ -394,8 +420,10 @@ def agir(evento, contexto):
         
         return {"acoes": acoes, "nivel": 3, "confianca": confianca}
     
-    # Nível 2 - Intervenção (0.5-0.8)
-    if confianca >= 0.5:
+    # A single, uncalibrated edge flag scores 0.5. It can prompt a voice
+    # check-in, but family notification needs corroborating evidence.
+    # Nível 2 - Intervenção (0.6-0.8)
+    if confianca >= 0.6:
         acoes.append({
             "tipo": "notificar_familia", "urgencia": "media",
             "status": "proposta_nao_executada",

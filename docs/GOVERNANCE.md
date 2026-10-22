@@ -1,41 +1,27 @@
-# Libero - Governança
+# Governança e limites do Libero
 
-## Princípios
+O Libero é um protótipo de pesquisa para cuidado domiciliar. Os princípios abaixo orientam o projeto; não significam que o produto tenha certificação clínica, regulatória ou de segurança.
 
-1. **Dignidade**: O idoso não é objeto.
-2. **Autonomia**: O cuidador decide.
-3. **Beneficência**: Faz o bem.
-4. **Não-maleficência**: Não faz o mal.
-5. **Justiça**: Não discrimina.
-6. **Transparência**: Tudo é auditado.
+## Princípios de projeto
 
-## Privacidade
+1. **Dignidade:** tratar a pessoa como alguém com preferências e história próprias.
+2. **Autonomia:** apoiar cuidadores e preservar decisões humanas.
+3. **Beneficência e não maleficência:** preferir respostas acolhedoras e evitar escalonamentos automáticos não verificados.
+4. **Transparência:** distinguir registros, inferências e propostas de ações.
+5. **Equidade:** avaliar falsos positivos e vieses antes de qualquer uso real.
 
-- **Privacy by Design**: Dados brutos nunca saem do dispositivo.
-- **Criptografia end-to-end**: Só a família tem a chave.
-- **Expiração automática**: Áudio 30 dias, vídeo 7 dias.
-- **Consentimento granular**: Cada dado tem seu consentimento.
+## Controles que existem no protótipo
 
-## Auditoria
+- O edge aplica regras heurísticas e cooldowns para limitar eventos repetidos.
+- O orquestrador retorna explicitamente `acoes_externas_executadas: false`; o código não liga para o SAMU ou para a polícia.
+- Rotas protegidas usam autenticação por papéis e verificações por idoso.
+- As detecções não são probabilidades calibradas e não foram validadas clinicamente.
 
-Todas as ações dos agentes são registradas com:
-- Timestamp
-- Agente
-- Ação
-- Contexto
-- Resultado
-- Razão
-- Hash (integridade)
+## Garantias que ainda não existem
 
-## Detecção de Viés
+- Ações e decisões não têm trilha de auditoria persistente, imutável ou com hash garantido.
+- Não há detecção automática comprovada de viés ou certificação LGPD, GDPR, HIPAA ou ANVISA.
+- Não há validação clínica, acordo de nível de serviço, disponibilidade 24/7 ou garantia de detecção.
+- Não há integração ativa de chamadas para serviços de emergência nem confirmação de entrega de alertas à rede de cuidado.
 
-O sistema detecta automaticamente:
-- Viés de gênero
-- Viés de urgência
-- Viés de idade
-
-## Compliance
-
-- LGPD (Brasil)
-- GDPR (Europa)
-- HIPAA (EUA)
+Qualquer avaliação de saúde, segurança ou crise deve ser conduzida por pessoas qualificadas. Use dados fictícios em apresentações e não faça alegações médicas ou de prevenção garantida.

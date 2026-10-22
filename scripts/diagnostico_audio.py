@@ -2,16 +2,27 @@
 
 import math
 import io
+import json
 import subprocess
 import sys
 import time
 
 import numpy as np
-import sounddevice as sd
+
+sd = None
+
+
+def _sounddevice():
+    global sd
+    if sd is None:
+        import sounddevice
+        sd = sounddevice
+    return sd
 
 
 DURACAO_TESTE = 3
 DURACAO_SILENCIO = 1
+DURACAO_MAX_CONSULTA_DISPOSITIVOS = 8
 
 
 def _capturar_microfone(device_id, sample_rate):
@@ -20,7 +31,7 @@ def _capturar_microfone(device_id, sample_rate):
     def callback(indata, frames, time_info, status):
         amostras.append(indata[:, 0].copy())
 
-    with sd.InputStream(
+    with _sounddevice().InputStream(
         device=device_id,
         samplerate=sample_rate,
         channels=1,
@@ -46,6 +57,32 @@ def _capturar_isolado(device_id, sample_rate):
     return np.load(io.BytesIO(processo.stdout))
 
 
+def _consultar_dispositivos_isolado():
+    """Query PortAudio in a child process so a broken backend cannot hang this CLI."""
+    try:
+        processo = subprocess.run(
+            [sys.executable, __file__, "--devices"],
+            capture_output=True,
+            timeout=DURACAO_MAX_CONSULTA_DISPOSITIVOS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as erro:
+        raise RuntimeError(
+            f"PortAudio não respondeu em {DURACAO_MAX_CONSULTA_DISPOSITIVOS}s; "
+            "verifique se o sistema expõe um dispositivo de áudio."
+        ) from erro
+    if processo.returncode:
+        detalhe = processo.stderr.decode(errors="replace").strip()
+        raise RuntimeError(detalhe or "Falha ao consultar o PortAudio.")
+    try:
+        dispositivos = json.loads(processo.stdout.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as erro:
+        raise RuntimeError("A resposta da consulta de áudio não é JSON válido.") from erro
+    if not isinstance(dispositivos, list):
+        raise RuntimeError("A lista de dispositivos de áudio retornou formato inválido.")
+    return dispositivos
+
+
 def calcular_snr(amostras, sample_rate):
     """Estima SNR usando o primeiro segundo silencioso como piso de ruído."""
     corte = int(sample_rate * DURACAO_SILENCIO)
@@ -63,7 +100,7 @@ def calcular_snr(amostras, sample_rate):
 
 def main():
     try:
-        dispositivos = sd.query_devices()
+        dispositivos = _consultar_dispositivos_isolado()
     except Exception as erro:
         print(f"Não foi possível consultar os dispositivos de áudio: {erro}")
         return 1
@@ -118,6 +155,14 @@ def main():
 
 
 if __name__ == "__main__":
+    if len(sys.argv) == 2 and sys.argv[1] == "--devices":
+        try:
+            dispositivos = [dict(dispositivo) for dispositivo in _sounddevice().query_devices()]
+            print(json.dumps(dispositivos, ensure_ascii=False))
+        except Exception as erro:
+            print(f"Falha na consulta de dispositivos: {erro}", file=sys.stderr)
+            raise SystemExit(1)
+        raise SystemExit(0)
     if len(sys.argv) == 4 and sys.argv[1] == "--capture":
         try:
             audio_capturado = _capturar_microfone(int(sys.argv[2]), int(sys.argv[3]))

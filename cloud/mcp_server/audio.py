@@ -60,5 +60,7 @@ def status():
         "ultima_frase": l.ultima_frase,
         "nivel_atual": l.nivel_atual,
         "threshold": l.threshold,
-        "metodo": l.metodo_transcricao if hasattr(l, 'metodo_transcricao') else 'desconhecido'
+        "metodo": l.metodo_transcricao if hasattr(l, 'metodo_transcricao') else 'desconhecido',
+        "estado_microfone": getattr(l, "estado_microfone", "desconhecido"),
+        "ultimo_erro": getattr(l, "ultimo_erro_transcricao", None),
     }

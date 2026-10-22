@@ -1,0 +1,336 @@
+"""
+Libero - Sistema Principal
+Com cooldown e debounce para evitar spam de eventos.
+"""
+
+import os
+import sys
+import time
+import threading
+from datetime import datetime, timezone, timedelta
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from edge.capture.listener import Listener
+from edge.capture.stream import CameraLibero, MEDIAPIPE_DISPONIVEL
+from edge.output.speaker import falar
+from cloud.agents.orchestrator import Orquestrador
+from cloud.mcp_server import audio
+from cloud.mcp_server.chat import get_store
+from edge.camera_server import iniciar_camera_server, set_frame, set_status_provider
+
+CONSENTIMENTO_CAMERA = os.getenv("LIBERO_CAMERA_CONSENT", "").strip().lower() in {
+    "1", "true", "yes", "sim"
+}
+
+
+# ============================================================
+# COOLDOWN (evitar spam)
+# ============================================================
+
+class Cooldown:
+    """Evita que eventos idênticos disparem muitas vezes."""
+    
+    def __init__(self, segundos=10):
+        self.segundos = segundos
+        self.ultimos = {}  # chave -> timestamp
+    
+    def pode_disparar(self, chave):
+        agora = datetime.now(timezone.utc)
+        ultimo = self.ultimos.get(chave)
+        
+        if ultimo:
+            delta = (agora - ultimo).total_seconds()
+            if delta < self.segundos:
+                return False
+        
+        self.ultimos[chave] = agora
+        return True
+    
+    def resetar(self, chave=None):
+        if chave:
+            self.ultimos.pop(chave, None)
+        else:
+            self.ultimos.clear()
+
+
+class Libero:
+    """
+    Sistema completo com cooldown e debounce.
+    """
+    
+    def __init__(self, idoso_id="dona-maria", nome="Dona Maria"):
+        self.idoso_id = idoso_id
+        self.contexto = {
+            "nome": nome,
+            "local": "casa",
+            "camera_autorizada": CONSENTIMENTO_CAMERA
+        }
+        
+        self.orquestrador = Orquestrador(idoso_id, self.contexto)
+        self.listener = Listener(callback=self._on_audio)
+        self.camera = None
+        
+        # Cooldowns
+        self.cooldown_camera = Cooldown(segundos=30)  # movimento
+        self.cooldown_fala = Cooldown(segundos=5)     # fala
+        self.cooldown_som = Cooldown(segundos=10)
+        self.cooldown_processamento = Cooldown(segundos=3)
+        
+        # Estado
+        self.rodando = False
+        self.eventos = []
+        self.ultima_resposta = None
+        self.historico_conversa = []
+        self.ultimo_contexto = ""
+        self.falando = False  # lock para não falar ao mesmo tempo
+    
+    def iniciar(self):
+        print("[Libero] Iniciando sistema...")
+        
+        # Listener
+        self.listener.iniciar()
+        audio.registrar_listener(self.listener)
+        
+        # A câmera requer consentimento explícito; áudio funciona sem ela.
+        if CONSENTIMENTO_CAMERA:
+            try:
+                self.camera = CameraLibero(camera_id=0, callback=self._on_camera)
+                self.camera.iniciar()
+            except Exception as e:
+                print(f"[Libero] Câmera indisponível: {e}")
+                self.camera = None
+        else:
+            print("[Libero] Câmera desativada: consentimento não configurado")
+        
+        self.rodando = True
+        set_status_provider(self.status)
+        
+        # Iniciar servidor de câmera na porta 8081
+        try:
+            iniciar_camera_server(porta=8081)
+        except Exception as e:
+            print(f"[Libero] Erro ao iniciar servidor de câmera: {e}")
+        
+        print("\n[Libero] ✓ Sistema rodando")
+        print("[Libero] Cooldowns ativos: câmera=30s, fala=5s\n")
+    
+    def parar(self):
+        print("\n[Libero] Parando...")
+        self.rodando = False
+        if self.listener:
+            self.listener.parar()
+        if self.camera:
+            self.camera.parar()
+        print("[Libero] Sistema parado")
+    
+    def _on_audio(self, evento):
+        """Callback quando listener detecta fala."""
+        if evento.get("tipo") == "som_anomalo":
+            subtipo = evento.get("subtipo", "som_alto")
+            if not self.cooldown_som.pode_disparar(subtipo):
+                return
+            self._registrar_evento_sonoro(
+                tipo=subtipo,
+                texto=f"[{subtipo.replace('_', ' ').capitalize()}] detectado pelo microfone",
+                metadata={
+                    "energia": evento.get("energia"),
+                    "origem": "audio",
+                    "score_nao_calibrado": True,
+                },
+            )
+            print(f"\n[Áudio] {subtipo} registrado (sinal experimental)")
+            return
+
+        texto = evento.get("texto", "")
+        
+        if not texto or len(texto.strip()) < 2:
+            return
+        
+        # Cooldown de fala (evita transcrever a mesma coisa)
+        if not self.cooldown_fala.pode_disparar("fala"):
+            return
+        
+        print(f"\n[Áudio] {texto}")
+        
+        # Lock: se está falando, não processa
+        if self.falando:
+            print("[Libero] (ocupado falando, ignorando)")
+            return
+        
+        threading.Thread(
+            target=self._processar,
+            args=(texto, {
+                "energia_rms": evento.get("energia_media", evento.get("energia", 0)),
+                "energia_media": evento.get("energia_media", 0),
+                "energia_max": evento.get("energia_max", 0),
+                "zcr": evento.get("zcr", 0),
+                "duracao": evento.get("duracao", 0),
+            }, {}),
+            daemon=True
+        ).start()
+    
+    def _on_camera(self, evento):
+        """Callback quando câmera detecta evento."""
+        tipo = evento.get("tipo")
+        confianca = evento.get("confianca", 0)
+        
+        # Só processar quedas com confiança alta
+        if tipo == "queda":
+            if not self.cooldown_camera.pode_disparar("queda"):
+                return
+            chave = "queda"
+        elif tipo == "movimento":
+            # Movimento só processa se confiança alta E se não houve fala recente
+            if confianca < 0.7:
+                return
+            if not self.cooldown_camera.pode_disparar("movimento"):
+                return
+            chave = "movimento"
+        else:
+            return
+        
+        print(f"\n[Câmera] {tipo} (confiança: {confianca:.2f})")
+        
+        # Registrar evento sonoro/visual
+        self._registrar_evento_sonoro(
+            tipo=tipo,
+            texto=f"[{tipo.capitalize()}] detectado pela câmera",
+            metadata={"confianca": confianca, "origem": "camera"}
+        )
+        
+        # Lock: se está falando, ignora
+        if self.falando:
+            return
+        
+        dados = evento.get("dados", {})
+        features_visao = {
+            "angulo_corpo": dados.get("angulo", dados.get("angulo_corpo", 0)),
+            "variacao_angular": dados.get("variacao", 0),
+            "movimento_observado": tipo == "movimento",
+            "queda_detectada_edge": tipo == "queda",
+        }
+        
+        threading.Thread(
+            target=self._processar,
+            args=("", {}, features_visao),
+            daemon=True
+        ).start()
+    
+    def _registrar_evento_sonoro(self, tipo, texto, metadata=None):
+        """Registra evento sonoro no chat store."""
+        try:
+            store = get_store()
+            store.adicionar_mensagem(
+                self.idoso_id,
+                autor="sistema",
+                texto=texto or f"[{tipo}]",
+                tipo=tipo,
+                metadata=metadata or {}
+            )
+        except Exception as e:
+            print(f"[Libero] Erro ao registrar evento: {e}")
+    
+    def _processar(self, texto, features_audio, features_visao):
+        """Processa uma entrada."""
+        # Cooldown de processamento
+        if not self.cooldown_processamento.pode_disparar("proc"):
+            return
+        
+        try:
+            contexto_llm = {"nome": "Dona Maria", "historico": self.ultimo_contexto}
+            self.ultimo_contexto = texto
+            resultado = self.orquestrador.processar(
+                texto,
+                features_audio=features_audio,
+                features_visao=features_visao,
+                movimento=features_visao.get("movimento_observado", False)
+            )
+            
+            nivel = resultado.get("nivel", 0)
+            resposta = resultado.get("resposta")
+            
+            self.eventos.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "texto": texto,
+                "nivel": nivel,
+                "resposta": resposta,
+                "acoes": [a["tipo"] for a in resultado.get("acoes", [])]
+            })
+            
+            # Falar (com lock)
+            if resposta:
+                self._falar_uma_vez(resposta)
+            
+            acoes = [a["tipo"] for a in resultado.get("acoes", [])]
+            if acoes:
+                print(f"[Ações] {acoes}")
+        except Exception as e:
+            print(f"[Libero] Erro: {e}")
+    
+    def _falar_uma_vez(self, texto):
+        """Fala um texto, pausando o microfone durante a fala."""
+        if self.falando:
+            return
+        
+        self.falando = True
+        listener_pausado = False
+        try:
+            if self.listener:
+                self.listener.pausar()
+                listener_pausado = True
+                time.sleep(0.4)
+            
+            print(f"[Libero] 🔊 {texto}")
+            falar(texto)
+            self.ultima_resposta = texto
+        finally:
+            try:
+                if listener_pausado:
+                    time.sleep(0.4)
+                    self.listener.retomar()
+            finally:
+                self.falando = False
+    
+    def status(self):
+        return {
+            "edge_running": self.rodando,
+            "rodando": self.rodando,
+            "idoso_id": self.idoso_id,
+            "eventos": len(self.eventos),
+            "ultimos_eventos": self.eventos[-5:],
+            "listener": self.listener.status() if self.listener else None,
+            "camera": {
+                "ativa": bool(self.camera and self.camera.rodando),
+                "consentimento": CONSENTIMENTO_CAMERA,
+                "processamento": "experimental" if self.camera else "desativado",
+            },
+            "mediapipe": MEDIAPIPE_DISPONIVEL,
+            "cooldowns": {
+                "camera": self.cooldown_camera.segundos,
+                "fala": self.cooldown_fala.segundos,
+                "proc": self.cooldown_processamento.segundos
+            }
+        }
+
+
+# ============================================================
+# MAIN
+# ============================================================
+
+if __name__ == "__main__":
+    libero = Libero(idoso_id="dona-maria", nome="Dona Maria")
+    
+    try:
+        libero.iniciar()
+        
+        while True:
+            time.sleep(10)
+            status = libero.status()
+            print(f"\r[Status] {status['eventos']} eventos | "
+                  f"Câmera: {status['camera']} | "
+                  f"Frases: {status['listener']['frases_processadas']}", end="")
+    except KeyboardInterrupt:
+        print("\n")
+    finally:
+        libero.parar()

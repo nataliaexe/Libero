@@ -133,12 +133,20 @@ class Compliance:
         }
     
     def relatorio(self):
-        """Gera relatório de compliance."""
+        """List checks that still need assessment; this is not a compliance verdict."""
         return {
-            "LGPD": len(self.REGRAS["LGPD"]),
-            "GDPR": len(self.REGRAS["GDPR"]),
-            "HIPAA": len(self.REGRAS["HIPAA"]),
-            "total": sum(len(r) for r in self.REGRAS.values())
+            "status": "nao_avaliado",
+            "aviso": "Este relatório lista controles pendentes; não atesta conformidade.",
+            "LGPD": "pendente_de_avaliacao",
+            "GDPR": "pendente_de_avaliacao",
+            "HIPAA": "pendente_de_avaliacao",
+            "controles_pendentes": {
+                regulamento: list(controles)
+                for regulamento, controles in self.REGRAS.items()
+            },
+            "total_controles_pendentes": sum(
+                len(controles) for controles in self.REGRAS.values()
+            ),
         }
 
 

@@ -1,58 +1,26 @@
-# Libero - Arquitetura
+# Libero architecture
 
-## Visão Geral
+Libero is a research prototype for home-care support. It has a local edge process, an HTTP API/MCP endpoint, and a browser dashboard. It is not a validated medical device or a guaranteed 24-hour monitoring service.
 
-O Libero é um sistema de cuidado para idosos com Alzheimer ou demência.
-Ele percebe quando o idoso está confuso, agitado ou tentando sair sozinho,
-e age: conversa, acalma, orienta, avisa a família.
+## Implemented flow
 
-## Camadas
+1. **Edge capture:** `edge/main.py` starts a microphone listener. Camera capture starts only when `LIBERO_CAMERA_CONSENT=true` is set before launch. The edge serves its local status and MJPEG stream on port 8081.
+2. **Speech processing:** Voice activity and energy heuristics gate transcription. Groq Whisper is used when configured; local Whisper is the fallback when installed. A transcribed phrase is sent to the orchestrator.
+3. **Orchestration:** `cloud/agents/orchestrator.py` applies heuristic safety rules, conversation responses, and memory detection. Responses may use Groq, Bedrock, or a limited offline fallback.
+4. **MCP and API:** `cloud/mcp_server/server.py` exposes the JSON-RPC MCP endpoint at `/mcp` using Streamable HTTP JSON responses. The browser conversation uses `initialize`, `notifications/initialized`, `tools/list`, and `tools/call` against this endpoint. The server does not open SSE streams; GET `/mcp` returns `405 Method Not Allowed`.
+5. **Family dashboard:** The web UI shows locally stored conversations, memories, tasks, and alerts. Its environment page reads sensor state from the edge process rather than assuming the API process shares in-memory listener state.
 
-### 1. Edge (Dispositivo)
+## Storage and optional integrations
 
-- **Captura de áudio**: VAD, buffer circular
-- **Captura de movimento**: Frame differencing
-- **Detecção de queda**: Pose estimation (MediaPipe)
-- **Processamento local**: Whisper tiny, extração de features
-- **Decisão local**: Níveis 0-3
+- Chat and care tasks are stored in local JSON files in the user's data directory.
+- Bedrock and Polly calls require AWS credentials and configuration. Bedrock use is optional and must be active to claim it in a demo.
+- SNS, DynamoDB, Timestream, S3, multi-home operation, and production deployment are not part of the default local flow. Existing infrastructure code is not evidence of a deployed integration.
+- The Fire TV folder contains an experimental interface, not a submission-ready application verified on Fire OS or Vega OS.
 
-### 2. Cloud (AWS)
+## Limits
 
-- **MCP Server**: Expõe ferramentas para Alexa+
-- **Agentes**:
-  - Companhia (terapia de validação)
-  - Segurança (queda, fuga, agitação)
-  - Memória (histórias, reminiscência)
-  - Cuidado (remédios, água, comida)
-  - Família (notificações, relatórios)
-  - Saúde (detecção precoce)
-  - Governança (auditoria, viés, compliance)
-- **Dados**: DynamoDB, Timestream, S3
-- **Notificação**: SNS, SES, Connect
-
-### 3. Conhecimento
-
-- **Estágios**: Braak, Reisberg, CDR, GDS
-- **Terapias**: Validação, reminiscência, musicoterapia, etc.
-- **Crises**: Sundowning, agitação, alucinação, fuga, queda
-
-### 4. Interface
-
-- **Fire TV**: Interface do idoso
-- **Mobile**: Interface do cuidador
-- **Web**: Dashboard da família
-
-## Fluxo de Dados
-
-Idoso → Edge → Cloud → Agentes → Ação → Idoso
-↓
-Família
-
-## Níveis de Intervenção
-
-| Nível | Quando | O Que Faz |
-| :--- | :--- | :--- |
-| 0 | Tudo normal | Observa |
-| 1 | Oportunidade | Conversa |
-| 2 | Confusão, agitação | Intervém |
-| 3 | Queda, fuga | Emergência |
+- Fall and sound-event detection are experimental heuristics, not calibrated clinical probabilities.
+- A camera frame or connected edge process does not establish round-the-clock availability.
+- The prototype does not contact emergency services.
+- The edge process reports its current sensor state and stores detected events locally. Automatic delivery of edge detections to the dashboard WebSocket or remote family notifications is not implemented; the visible WebSocket overlay is triggered by a demo endpoint.
+- The edge stream is intended for a local demo. Production use requires a reviewed transport, TLS, authorization, and privacy design.

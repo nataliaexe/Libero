@@ -10,8 +10,9 @@ import threading
 import re
 import tempfile
 import unicodedata
+from math import gcd
 import numpy as np
-import sounddevice as sd
+from scipy.signal import resample_poly
 from datetime import datetime, timezone
 from scipy.io.wavfile import write
 from dotenv import load_dotenv
@@ -38,14 +39,14 @@ CHANNELS = 1
 BLOCK_SIZE = 1024
 SILENCIO_MAX = 3.0
 JANELA_MERGE_VOZ = 0.8
-LIMIAR_SOM_ALTO = 0.5  # energia para considerar som alto
-LIMIAR_GRITO = 0.7     # energia + zcr alto = grito    # era 1.5, agora 3.0 (Linux com PipeWire tem latência)
-MAX_THRESHOLD = 0.15   # não passar disso, mesmo com ruído
+LIMIAR_SOM_ALTO = 0.99  # energia para considerar som alto
+LIMIAR_GRITO = 0.99     # energia + zcr alto = grito    # era 1.5, agora 3.0 (Linux com PipeWire tem latência)
+MAX_THRESHOLD = 0.08   # cap to avoid requiring an unusually loud voice
 
 # Filtros contra falso positivo
-DURACAO_MIN_FRASE = 0.5    # era 1.2, agora 0.5        # era 0.4-0.8, agora 1.2s
-ENERGIA_MIN_MEDIA = 0.03       # era 0.04, agora 0.06
-ENERGIA_MIN_MAX = 0.10         # pico mínimo
+DURACAO_MIN_FRASE = 0.18
+ENERGIA_MIN_MEDIA = 0.008
+ENERGIA_MIN_MAX = 0.025
 # Palavras críticas que ignoram filtros (emergência)
 PALAVRAS_CRITICAS = [
     "socorro", "ajuda", "ajudar", "cai", "caiu", "caí",
@@ -53,8 +54,76 @@ PALAVRAS_CRITICAS = [
     "quebrei", "nao consigo"
 ]
 
-BLOCOS_VOZ_MIN = 3    # era 5, agora 3 (Linux picota muito)             # reduzido para ambientes com ruído
-SNR_MIN = 3.0                  # sinal/ruído mínimo
+BLOCOS_VOZ_MIN = 2
+SNR_MIN = 1.5
+SPEECH_LANGUAGE = os.getenv("LIBERO_SPEECH_LANGUAGE", "auto").strip().lower()
+DEFAULT_LANGUAGE = os.getenv("LIBERO_DEFAULT_LANGUAGE", "en").strip().lower()
+AUDIO_INPUT_DEVICE = os.getenv("LIBERO_AUDIO_INPUT_DEVICE", "").strip()
+
+# PortAudio initialization can block on hosts with an unavailable audio backend.
+# Keep it out of module import and perform it on the listener's daemon thread.
+sd = None
+_sounddevice_lock = threading.Lock()
+
+
+def _get_sounddevice():
+    global sd
+    if sd is None:
+        with _sounddevice_lock:
+            if sd is None:
+                import sounddevice
+                sd = sounddevice
+    return sd
+
+
+def _parse_audio_device(value):
+    """Accept a PortAudio index or a device name from the local environment."""
+    if not value:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        return value
+
+
+def _supported_input_rate(device):
+    """Use 16 kHz when supported, otherwise capture at the device's native rate."""
+    sounddevice = _get_sounddevice()
+    try:
+        sounddevice.check_input_settings(
+            device=device, channels=CHANNELS, samplerate=SAMPLE_RATE, dtype="float32"
+        )
+        return SAMPLE_RATE
+    except Exception:
+        info = sounddevice.query_devices(device, "input")
+        native_rate = round(float(info["default_samplerate"]))
+        sounddevice.check_input_settings(
+            device=device, channels=CHANNELS, samplerate=native_rate, dtype="float32"
+        )
+        print(
+            f"[Libero Listener] O dispositivo não aceita {SAMPLE_RATE} Hz; "
+            f"capturando a {native_rate} Hz e convertendo para {SAMPLE_RATE} Hz."
+        )
+        return native_rate
+
+
+def _normalizar_idioma(language, fallback=None):
+    language = (language or "").strip().lower().replace("_", "-")
+    if language.startswith("en") or language in {"english", "inglês", "ingles"}:
+        return "en"
+    if language.startswith("pt") or language in {"portuguese", "portugues", "português"}:
+        return "pt-BR"
+    if language:
+        return None
+    fallback = (fallback or DEFAULT_LANGUAGE).lower()
+    return "pt-BR" if fallback.startswith("pt") else "en"
+
+
+def _transcricao_plausivel(texto, duracao):
+    """Reject ASR hallucinations that contain far more words than the clip can hold."""
+    palavras = re.findall(r"[\w]+(?:['’][\w]+)*", texto, flags=re.UNICODE)
+    limite = max(5, int(max(duracao, 0) * 6) + 2)
+    return len(palavras) <= limite
 
 
 class Listener:
@@ -62,7 +131,8 @@ class Listener:
         self.callback = callback
         self.modelo_whisper = modelo_whisper
         self.modelo = None
-        self.dispositivo = dispositivo
+        self.dispositivo = dispositivo if dispositivo is not None else _parse_audio_device(AUDIO_INPUT_DEVICE)
+        self.input_sample_rate = SAMPLE_RATE
         
         self.threshold = threshold
         self.threshold_calibrado = False
@@ -82,7 +152,13 @@ class Listener:
         self.ultimo_timestamp = None
         self.nivel_atual = 0.0
         self.mostrar_nivel = False
-        self.metodo_transcricao = "groq" if _groq else "whisper_local"
+        self.metodo_transcricao = (
+            "groq" if _groq else "whisper_local" if WHISPER_DISPONIVEL else "indisponivel"
+        )
+        self.ultimo_idioma = _normalizar_idioma(None)
+        self.ultimo_erro_transcricao = None
+        self._transcription_lock = threading.Lock()
+        self.estado_microfone = "parado"
     
     def calibrar(self, duracao=3):
         """Calibra com threshold mais alto."""
@@ -94,21 +170,21 @@ class Listener:
             amostras.append(float(np.sqrt(np.mean(indata**2))))
         
         try:
-            with sd.InputStream(
-                samplerate=SAMPLE_RATE, channels=CHANNELS,
+            with _get_sounddevice().InputStream(
+                samplerate=self.input_sample_rate, channels=CHANNELS,
                 blocksize=BLOCK_SIZE, dtype='float32',
                 callback=cb, device=self.dispositivo
             ):
                 time.sleep(duracao)
         except Exception as e:
             print(f"[Libero Listener] Erro calibração: {e}")
-            self.threshold = 0.10
+            self.threshold = 0.02
             self.ruido_base = 0.02
             self.threshold_calibrado = True
             return
         
         if not amostras:
-            self.threshold = 0.10
+            self.threshold = 0.02
             self.ruido_base = 0.02
             self.threshold_calibrado = True
             return
@@ -117,11 +193,11 @@ class Listener:
         ruido_std = float(np.std(amostras))
         pico_ruido = float(np.percentile(amostras, 99))
         
-        # Threshold = max(ruído + 5σ, pico ruído × 2, mínimo absoluto)
+        # Use an adaptive low floor so ordinary speech isn't lost at normal mic levels.
         threshold_calculado = max(
-            self.ruido_base + 5 * ruido_std,
-            pico_ruido * 2,
-            0.08   # mínimo absoluto alto
+            self.ruido_base + 3 * ruido_std,
+            pico_ruido * 1.4,
+            0.008,
         )
         
         self.threshold = min(threshold_calculado, MAX_THRESHOLD)
@@ -133,16 +209,32 @@ class Listener:
         self.threshold_calibrado = True
     
     def iniciar(self):
-        if not self.threshold_calibrado:
-            self.calibrar(duracao=3)
-        
+        if self.rodando:
+            return
+        if self.thread and self.thread.is_alive():
+            print("[Libero Listener] Inicialização anterior ainda está bloqueada; reinicie o processo edge após corrigir o dispositivo.")
+            return
         self.rodando = True
+        self.estado_microfone = "inicializando"
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
-        print("[Libero Listener] Iniciado. Ouvindo microfone...")
+        threading.Thread(target=self._vigiar_inicializacao, daemon=True).start()
+        print("[Libero Listener] Inicializando microfone em segundo plano...")
+
+    def _vigiar_inicializacao(self):
+        time.sleep(15)
+        if self.rodando and self.estado_microfone == "inicializando":
+            self.estado_microfone = "travado"
+            self.rodando = False
+            self.ultimo_erro_transcricao = (
+                "Inicialização do PortAudio excedeu 15s; verifique o dispositivo "
+                "e o backend de áudio do sistema."
+            )
+            print(f"[Libero Listener] {self.ultimo_erro_transcricao}")
     
     def parar(self):
         self.rodando = False
+        self.estado_microfone = "parado"
         if self.thread:
             self.thread.join(timeout=2)
         print("[Libero Listener] Parado")
@@ -160,19 +252,41 @@ class Listener:
     
     def _loop(self):
         def cb(indata, frames, time_info, status):
-            self._processar_bloco(indata.copy())
+            bloco = indata[:, 0]
+            if self.input_sample_rate != SAMPLE_RATE:
+                divisor = gcd(self.input_sample_rate, SAMPLE_RATE)
+                bloco = resample_poly(
+                    bloco, SAMPLE_RATE // divisor, self.input_sample_rate // divisor
+                ).astype(np.float32, copy=False)
+            else:
+                bloco = bloco.copy()
+            self._processar_bloco(bloco)
         
         try:
-            with sd.InputStream(
-                samplerate=SAMPLE_RATE, channels=CHANNELS,
+            _get_sounddevice()
+            if not self.rodando:
+                return
+            self.input_sample_rate = _supported_input_rate(self.dispositivo)
+            if not self.threshold_calibrado:
+                self.calibrar(duracao=3)
+            if not self.rodando:
+                return
+            with _get_sounddevice().InputStream(
+                samplerate=self.input_sample_rate, channels=CHANNELS,
                 blocksize=BLOCK_SIZE, dtype='float32',
                 callback=cb, device=self.dispositivo
             ):
+                self.estado_microfone = "ouvindo"
                 while self.rodando:
                     time.sleep(0.1)
         except Exception as e:
+            self.estado_microfone = "erro"
+            self.ultimo_erro_transcricao = f"Microfone indisponível: {e}"
             print(f"[Libero Listener] Erro: {e}")
             self.rodando = False
+        finally:
+            if self.estado_microfone == "ouvindo":
+                self.estado_microfone = "parado"
     
     def _processar_bloco(self, bloco):
         if self.pausado:
@@ -282,10 +396,23 @@ class Listener:
         self.energia_max_buffer = 0.0
     
     def _transcrever_e_emitir(self, audio, duracao, validar_emergencia=False, blocos=0):
+        with self._transcription_lock:
+            self._transcrever_e_emitir_serial(audio, duracao, validar_emergencia, blocos)
+
+    def _transcrever_e_emitir_serial(self, audio, duracao, validar_emergencia=False, blocos=0):
         try:
+            self.ultimo_erro_transcricao = None
+            self.ultimo_idioma = _normalizar_idioma(None)
             texto = self._transcrever(audio)
             
             if not texto or len(texto.strip()) < 2:
+                return
+
+            if not _transcricao_plausivel(texto, duracao):
+                self.ultimo_erro_transcricao = (
+                    "Transcrição descartada: texto longo demais para a duração do áudio."
+                )
+                print(f"[Libero Listener] {self.ultimo_erro_transcricao}")
                 return
 
             palavra_critica = self._tem_palavra_critica(texto)
@@ -293,25 +420,32 @@ class Listener:
                 if not self._passa_filtros(audio, duracao, blocos):
                     return
             
-            # FILTRO 6: bloquear alucinações conhecidas do Whisper
+            # FILTRO 6: bloquear alucinações e fragmentos de áudio
+            texto_lower = texto.lower().strip()
+
             alucinacoes = [
-                "e aí", "tchau", "obrigado", "obrigada",
+                "e aí", "tchau", "obrigado", "obrigada", "bye", "thank you",
                 "legenda", "amara.org", "www.", ".com",
                 "inscreva", "curta", "compartilhe"
             ]
-            texto_lower = texto.lower().strip()
             
-            # Se for apenas uma alucinação curta, ignora
-            if len(texto) < 8 and any(a in texto_lower for a in alucinacoes):
-                print(f"[Libero Listener] Alucinação bloqueada: '{texto}'")
+            # Se for apenas fragmento (1 a 2 palavras) ou alucinação curta
+            palavras = texto.split()
+            if len(palavras) <= 2 and any(a in texto_lower for a in alucinacoes):
+                print(f"[Libero Listener] Fragmento/Alucinação bloqueado: '{texto}'")
                 return
+
+
             
             timestamp = datetime.now(timezone.utc).isoformat()
             self.frases_processadas += 1
             self.ultima_frase = texto
             self.ultimo_timestamp = timestamp
             
-            print(f"\n[Libero Listener] 🎤 '{texto}' ({duracao:.1f}s, SNR ok)")
+            print(
+                f"\n[Libero Listener] 🎤 '{texto}' ({duracao:.1f}s, "
+                f"language={self.ultimo_idioma}, method={self.metodo_transcricao})"
+            )
 
             energia_media = float(np.sqrt(np.mean(audio**2)))
             energia_max = float(np.max(np.abs(audio)))
@@ -324,6 +458,7 @@ class Listener:
                     "duracao": duracao,
                     "timestamp": timestamp,
                     "metodo": self.metodo_transcricao,
+                    "language": self.ultimo_idioma,
                     "energia_media": energia_media,
                     "energia_max": energia_max,
                     "zcr": zcr,
@@ -338,28 +473,59 @@ class Listener:
 
         try:
             write(tmp_path, SAMPLE_RATE, audio_int16)
+            language_hint = None if SPEECH_LANGUAGE in {"", "auto"} else SPEECH_LANGUAGE
             if _groq:
                 try:
                     with open(tmp_path, "rb") as f:
                         t = _groq.audio.transcriptions.create(
                             file=("audio.wav", f.read()),
                             model="whisper-large-v3-turbo",
-                            language="pt",
-                            response_format="text",
-                            temperature=0.0  # menos alucinação
+                            response_format="verbose_json",
+                            temperature=0.0,
+                            **({"language": language_hint} if language_hint else {}),
                         )
-                    texto = t.strip() if isinstance(t, str) else t.text.strip()
+                    texto = t.strip() if isinstance(t, str) else (t.text or "").strip()
+                    idioma_detectado = getattr(t, "language", None)
+                    idioma = _normalizar_idioma(idioma_detectado, fallback=None)
+                    if idioma_detectado and idioma is None:
+                        self.ultimo_erro_transcricao = (
+                            f"Idioma de transcrição não suportado: {idioma_detectado}"
+                        )
+                        print(f"[Libero Listener] {self.ultimo_erro_transcricao}")
+                        return ""
+                    self.ultimo_idioma = idioma or _normalizar_idioma(None)
                     if texto:
+                        self.metodo_transcricao = "groq"
                         return texto
                 except Exception as e:
+                    self.ultimo_erro_transcricao = str(e)
                     print(f"[Libero Listener] Groq falhou: {e}")
             
             if WHISPER_DISPONIVEL:
                 if self.modelo is None:
                     self.modelo = whisper.load_model(self.modelo_whisper)
-                r = self.modelo.transcribe(tmp_path, language="pt", fp16=False)
+                r = self.modelo.transcribe(
+                    tmp_path, language=language_hint, fp16=False
+                )
+                idioma_detectado = r.get("language")
+                idioma = _normalizar_idioma(idioma_detectado, fallback=None)
+                if idioma_detectado and idioma is None:
+                    self.ultimo_erro_transcricao = (
+                        f"Idioma de transcrição não suportado: {idioma_detectado}"
+                    )
+                    print(f"[Libero Listener] {self.ultimo_erro_transcricao}")
+                    return ""
+                self.ultimo_idioma = idioma or _normalizar_idioma(None)
+                self.metodo_transcricao = "whisper_local"
                 return r["text"].strip()
             
+            self.ultimo_erro_transcricao = self.ultimo_erro_transcricao or (
+                "Nenhum provedor de transcrição disponível"
+            )
+            return ""
+        except Exception as e:
+            self.ultimo_erro_transcricao = str(e)
+            print(f"[Libero Listener] Erro de transcrição: {e}")
             return ""
         finally:
             try:
@@ -370,13 +536,18 @@ class Listener:
     def status(self):
         return {
             "rodando": self.rodando,
+            "estado_microfone": self.estado_microfone,
+            "dispositivo": self.dispositivo,
+            "taxa_captura": self.input_sample_rate,
             "threshold": self.threshold,
             "ruido_base": self.ruido_base,
             "nivel_atual": self.nivel_atual,
             "frases_processadas": self.frases_processadas,
             "ultima_frase": self.ultima_frase,
             "ultimo_timestamp": self.ultimo_timestamp,
-            "metodo": self.metodo_transcricao
+            "metodo": self.metodo_transcricao,
+            "idioma": self.ultimo_idioma,
+            "ultimo_erro": self.ultimo_erro_transcricao,
         }
 
 

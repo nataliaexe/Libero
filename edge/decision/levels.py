@@ -238,6 +238,10 @@ PALAVRAS_CONFUSAO = [
 ]
 
 PALAVRAS_SOLIDAO = ["sozinho", "sozinha", "ninguem", "triste", "chorar"]
+SAUDACOES = [
+    "hi", "hello", "hey", "good morning", "good afternoon", "good evening",
+    "how are you", "oi", "ola", "bom dia", "boa tarde", "boa noite",
+]
 
 
 def decidir_nivel(texto, hora=None, movimento=False):
@@ -251,6 +255,8 @@ def decidir_nivel(texto, hora=None, movimento=False):
         return emergencia["nivel"]
 
     texto_norm = _normalizar(texto)
+    if _match_palavra(texto_norm, SAUDACOES):
+        return Nivel.CONVERSA
     ajuda = _match_palavra(texto_norm, ["ajuda", "me ajuda", "me ajudem"])
     if ajuda:
         if re.search(r"\bme\s+ajuda\s*!+", texto_norm):
@@ -302,7 +308,8 @@ if __name__ == "__main__":
         ("Onde estou? Preciso ir para casa", "INTERVENCAO"),
         ("Estou sozinha", "CONVERSA"),
         ("Bom dia, como você está?", "CONVERSA"),
-        ("Oi", "OBSERVACAO"),
+        ("Oi", "CONVERSA"),
+        ("Hello", "CONVERSA"),
     ]
     
     print("=== Teste de Decisão Contextual ===\n")

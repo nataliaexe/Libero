@@ -12,12 +12,14 @@ from datetime import datetime, timezone, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from edge.capture.listener import Listener
-from edge.capture.stream import CameraLibero, MEDIAPIPE_DISPONIVEL
+from edge.capture import stream as camera_stream
 from edge.output.speaker import falar
 from cloud.agents.orchestrator import Orquestrador
 from cloud.mcp_server import audio
 from cloud.mcp_server.chat import get_store
-from edge.camera_server import iniciar_camera_server, set_frame
+from edge.camera_server import iniciar_camera_server, set_frame, set_status_provider
+
+CameraLibero = camera_stream.CameraLibero
 
 CONSENTIMENTO_CAMERA = os.getenv("LIBERO_CAMERA_CONSENT", "").strip().lower() in {
     "1", "true", "yes", "sim"
@@ -73,14 +75,18 @@ class Libero:
         
         # Cooldowns
         self.cooldown_camera = Cooldown(segundos=30)  # movimento
-        self.cooldown_fala = Cooldown(segundos=5)     # fala
-        self.cooldown_processamento = Cooldown(segundos=3)
+        self.cooldown_fala = Cooldown(segundos=1.25)  # suppress only immediate duplicate transcripts
+        self.cooldown_som = Cooldown(segundos=10)
         
         # Estado
         self.rodando = False
         self.eventos = []
         self.ultima_resposta = None
+        self.historico_conversa = []
+        self.ultimo_contexto = ""
         self.falando = False  # lock para não falar ao mesmo tempo
+        self._processing_lock = threading.Lock()
+        self.ultimo_metodo_tts = None
     
     def iniciar(self):
         print("[Libero] Iniciando sistema...")
@@ -101,6 +107,7 @@ class Libero:
             print("[Libero] Câmera desativada: consentimento não configurado")
         
         self.rodando = True
+        set_status_provider(self.status)
         
         # Iniciar servidor de câmera na porta 8081
         try:
@@ -109,7 +116,7 @@ class Libero:
             print(f"[Libero] Erro ao iniciar servidor de câmera: {e}")
         
         print("\n[Libero] ✓ Sistema rodando")
-        print("[Libero] Cooldowns ativos: câmera=30s, fala=5s\n")
+        print("[Libero] Cooldowns ativos: câmera=30s, duplicata de fala=1,25s\n")
     
     def parar(self):
         print("\n[Libero] Parando...")
@@ -122,22 +129,35 @@ class Libero:
     
     def _on_audio(self, evento):
         """Callback quando listener detecta fala."""
+        if evento.get("tipo") == "som_anomalo":
+            subtipo = evento.get("subtipo", "som_alto")
+            if not self.cooldown_som.pode_disparar(subtipo):
+                return
+            self._registrar_evento_sonoro(
+                tipo=subtipo,
+                texto=f"[{subtipo.replace('_', ' ').capitalize()}] detectado pelo microfone",
+                metadata={
+                    "energia": evento.get("energia"),
+                    "origem": "audio",
+                    "score_nao_calibrado": True,
+                },
+            )
+            print(f"\n[Áudio] {subtipo} registrado (sinal experimental)")
+            return
+
         texto = evento.get("texto", "")
         
         if not texto or len(texto.strip()) < 2:
             return
         
         # Cooldown de fala (evita transcrever a mesma coisa)
-        if not self.cooldown_fala.pode_disparar("fala"):
+        chave_fala = " ".join(texto.lower().split())
+        if not self.cooldown_fala.pode_disparar(chave_fala):
             return
         
         print(f"\n[Áudio] {texto}")
         
-        # Lock: se está falando, não processa
-        if self.falando:
-            print("[Libero] (ocupado falando, ignorando)")
-            return
-        
+        # Turnos são serializados em _processar; não descarte fala de seguimento.
         threading.Thread(
             target=self._processar,
             args=(texto, {
@@ -146,7 +166,7 @@ class Libero:
                 "energia_max": evento.get("energia_max", 0),
                 "zcr": evento.get("zcr", 0),
                 "duracao": evento.get("duracao", 0),
-            }, {}),
+            }, {}, evento.get("language")),
             daemon=True
         ).start()
     
@@ -157,6 +177,13 @@ class Libero:
         
         # Só processar quedas com confiança alta
         if tipo == "queda":
+            dados = evento.get("dados") or {}
+            if dados.get("metodo") != "mediapipe" or confianca < 0.8:
+                print(
+                    "[Câmera] Queda ignorada: detector de pose confiável indisponível "
+                    "ou evidência abaixo do limiar."
+                )
+                return
             if not self.cooldown_camera.pode_disparar("queda"):
                 return
             chave = "queda"
@@ -189,6 +216,8 @@ class Libero:
             "variacao_angular": dados.get("variacao", 0),
             "movimento_observado": tipo == "movimento",
             "queda_detectada_edge": tipo == "queda",
+            "confianca_queda_edge": confianca if tipo == "queda" else 0.0,
+            "metodo_deteccao": dados.get("metodo"),
         }
         
         threading.Thread(
@@ -211,18 +240,24 @@ class Libero:
         except Exception as e:
             print(f"[Libero] Erro ao registrar evento: {e}")
     
-    def _processar(self, texto, features_audio, features_visao):
-        """Processa uma entrada."""
-        # Cooldown de processamento
-        if not self.cooldown_processamento.pode_disparar("proc"):
-            return
-        
+    def _processar(self, texto, features_audio, features_visao, language=None):
+        """Serialize conversation turns without discarding quick follow-up speech."""
+        with self._processing_lock:
+            self._processar_turno(texto, features_audio, features_visao, language)
+
+    def _processar_turno(self, texto, features_audio, features_visao, language=None):
+        """Run one turn through safety, conversation, persistence, and speech."""
         try:
+            language = language or self.orquestrador.contexto.get(
+                "language", self.contexto.get("language", "en")
+            )
+            contexto_extra = {"language": language} if language else None
             resultado = self.orquestrador.processar(
                 texto,
                 features_audio=features_audio,
                 features_visao=features_visao,
-                movimento=features_visao.get("movimento_observado", False)
+                movimento=features_visao.get("movimento_observado", False),
+                contexto_extra=contexto_extra,
             )
             
             nivel = resultado.get("nivel", 0)
@@ -238,7 +273,7 @@ class Libero:
             
             # Falar (com lock)
             if resposta:
-                self._falar_uma_vez(resposta)
+                self._falar_uma_vez(resposta, language=language)
             
             acoes = [a["tipo"] for a in resultado.get("acoes", [])]
             if acoes:
@@ -246,7 +281,7 @@ class Libero:
         except Exception as e:
             print(f"[Libero] Erro: {e}")
     
-    def _falar_uma_vez(self, texto):
+    def _falar_uma_vez(self, texto, language=None):
         """Fala um texto, pausando o microfone durante a fala."""
         if self.falando:
             return
@@ -260,7 +295,8 @@ class Libero:
                 time.sleep(0.4)
             
             print(f"[Libero] 🔊 {texto}")
-            falar(texto)
+            resultado_audio = falar(texto, language=language)
+            self.ultimo_metodo_tts = resultado_audio.get("metodo")
             self.ultima_resposta = texto
         finally:
             try:
@@ -272,18 +308,27 @@ class Libero:
     
     def status(self):
         return {
+            "edge_running": self.rodando,
             "rodando": self.rodando,
             "idoso_id": self.idoso_id,
             "eventos": len(self.eventos),
             "ultimos_eventos": self.eventos[-5:],
             "listener": self.listener.status() if self.listener else None,
-            "camera": "ativa" if self.camera else "inativa",
-            "mediapipe": MEDIAPIPE_DISPONIVEL,
+            "camera": {
+                "ativa": bool(self.camera and self.camera.rodando),
+                "consentimento": CONSENTIMENTO_CAMERA,
+                "processamento": "experimental" if self.camera else "desativado",
+                "pose": camera_stream.status_pose(),
+            },
+            "mediapipe": camera_stream.MEDIAPIPE_DISPONIVEL,
             "cooldowns": {
                 "camera": self.cooldown_camera.segundos,
-                "fala": self.cooldown_fala.segundos,
-                "proc": self.cooldown_processamento.segundos
-            }
+                "fala_duplicada": self.cooldown_fala.segundos,
+            },
+            "audio_output": {
+                "ultimo_metodo": self.ultimo_metodo_tts,
+                "ultima_resposta": self.ultima_resposta,
+            },
         }
 
 

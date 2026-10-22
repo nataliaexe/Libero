@@ -24,15 +24,11 @@ O filho tinha saído por 20 minutos. Duas quadras.
 
 ## A Solução
 
-**Libero** é um protótipo de sistema de cuidado 24 horas para idosos com Alzheimer ou demência que vivem em casa.
+**Libero** é um protótipo de apoio ao cuidado domiciliar. Quando o processo edge está rodando, ele processa áudio e transcreve falas; a captura de câmera é opcional e exige consentimento explícito. O sistema pode responder com linguagem acolhedora, preservar histórias como memórias consultáveis pela família e sinalizar eventos experimentais.
 
-Ele usa **câmera e áudio contínuos** para perceber quedas, tentativas de saída, confusão e crises — e **propõe** ações: conversar, acalmar, orientar ou sugerir ajuda externa.
+Um lembrete acompanha uma tarefa; o Libero busca preservar o contexto humano de uma conversa para que a família possa retomá-lo depois. A experiência de hackathon é uma simulação em web app conectada ao servidor MCP do Libero, não uma integração com um dispositivo Alexa+.
 
-Cada resposta é baseada em **Terapia de Validação** e **Reminiscência**: nunca corrige a realidade do idoso, sempre acolhe a emoção por trás dela.
-
-A família recebe **notificações em tempo real** (via WebSocket) e **histórias gravadas automaticamente**.
-
-**É um protótipo.** A validação clínica e a certificação são roadmap.
+As respostas seguem instruções inspiradas em terapia de validação e reminiscência. Isso não comprova eficácia clínica. O projeto **não garante monitoramento 24/7**, detecção de eventos ou entrega de alertas; não substitui cuidadores, profissionais de saúde ou serviços de emergência.
 
 ---
 
@@ -49,12 +45,12 @@ A família recebe **notificações em tempo real** (via WebSocket) e **história
 | Detecção multimodal de queda (áudio + visão) | Real | `python cloud/agents/safety.py` |
 | Detecção de negação ("não estou sentindo dor") | Real | `pytest tests/unit/test_adversarial.py` |
 | Decisão em 4 níveis | Real | `python edge/decision/levels.py` |
-| Câmera MJPEG ao vivo no dashboard | Real | `http://localhost:8081/stream` |
-| Chat em tempo real com bolhas | Real | Dashboard → Conversas |
-| Notificação em tempo real (WebSocket + overlay) | Real | `curl -X POST .../teste/emergencia` |
+| Stream MJPEG do edge | Real, local e sujeito a consentimento | `http://localhost:8081/stream` |
+| Conversa web usando MCP JSON-RPC | Real | Dashboard → Conversas; fluxo MCP inicializa, lista e chama ferramenta |
+| Overlay via WebSocket | Demonstração manual | `POST /teste/emergencia`; eventos detectados pelo edge ainda não são enviados automaticamente ao WebSocket |
 | Autenticação com 3 roles (família, médico, admin) | Real | `ana@libero.com` / `libero123` |
-| 13 ferramentas MCP (Streamable HTTP) | Real | `GET /mcp/tools` |
-| 102 testes automatizados | Real | `pytest tests/ -v` |
+| 13 ferramentas MCP (Streamable HTTP, resposta JSON) | Real | `POST /mcp`; `GET /mcp` retorna 405 porque SSE não é oferecido |
+| Suíte de testes automatizados | Incluída no repositório; execute localmente para ver o estado atual | `pytest tests/ -v` |
 
 ### Funcionalidades de Protótipo (com limitações)
 
@@ -179,6 +175,7 @@ LIBERO_ENV=development
 GROQ_API_KEY=gsk_sua_chave_aqui
 GROQ_LLM_MODEL=openai/gpt-oss-120b
 AWS_REGION=us-east-2
+# Para Bedrock, configure também BEDROCK_MODEL_ID e credenciais AWS via perfil/CLI.
 ```
 
 **Completo** (com AWS):
@@ -195,6 +192,10 @@ POLLY_VOICE=Camila
 
 ## Como Rodar
 
+### Atalho de demo local
+
+Com `scripts/setup.sh` já executado, rode `./scripts/run-all.sh` para iniciar o servidor MCP, o processo edge integrado e a interface web em sessões `tmux`. Abra o dashboard em `http://localhost:3000/dashboard.html`. O script não habilita a câmera; ela continua condicionada a consentimento explícito. Se o host não tiver microfone disponível, o dashboard informa o estado e a conversa digitada continua disponível.
+
 ### 3 Terminais
 
 **Terminal 1 — MCP Server**:
@@ -208,7 +209,7 @@ python cloud/mcp_server/server.py
 ```bash
 cd ~/libero
 source venv/bin/activate
-LIBERO_CAMERA_CONSENT=true python edge/main.py
+python edge/main.py  # áudio; câmera inicia somente se consentimento=true no .env
 ```
 
 **Terminal 3 — Dashboard**:
@@ -221,8 +222,9 @@ python -m http.server 3000 --directory interface/web
 ### Acessar
 
 - **Dashboard**: http://localhost:3000/dashboard.html
-- **Câmera (edge)**: http://localhost:8081/stream
-- **MCP API**: http://localhost:8080/mcp/tools
+- **Status real do edge**: http://localhost:8081/status
+- **Câmera (edge, com consentimento)**: http://localhost:8081/stream
+- **MCP Streamable HTTP**: http://localhost:8080/mcp
 
 ### Contas de Teste (modo development)
 
@@ -242,7 +244,7 @@ python -m http.server 3000 --directory interface/web
 pytest tests/ -v
 ```
 
-**102 testes passando**, cobrindo:
+**Validação automatizada: 112 testes passaram.** A execução foi feita sem chamar provedores externos (Groq/Bedrock), então ela valida o modo offline e os fluxos simulados. Microfone, saída de áudio, câmera física e credenciais AWS/Groq precisam ser conferidos no equipamento usado para a demo. Após os ajustes mais recentes no início da câmera, 8 testes direcionados também passaram. A cobertura inclui:
 
 - Detecção multimodal de queda
 - Detecção de negação ("não estou sentindo dor" ≠ emergência)
@@ -252,8 +254,8 @@ pytest tests/ -v
 - Auditoria e detecção de viés
 - 13 ferramentas MCP
 - Autenticação e isolamento entre idosos
-- WebSocket com escopo por idoso
-- Câmera com fallback e placeholder
+- Endpoint WebSocket com escopo por idoso; o broadcast do edge não está conectado automaticamente
+- Câmera do edge e placeholder MCP
 - Merge de blocos de voz
 - Listener com filtros anti-falso-positivo
 
@@ -271,7 +273,6 @@ pytest tests/ -v
 | CORS restrito em produção | Real |
 | Isolamento por idoso (authz) | Real |
 | Ticket one-time para câmera | Real |
-| Logs sem conteúdo sensível | Real |
 | Ações externas marcadas como `proposta_nao_executada` | Real |
 
 ### O Que NÃO Está Implementado
@@ -297,7 +298,9 @@ pytest tests/ -v
 - **Chamadas a SAMU/polícia não são executadas**. Apenas registradas.
 - **Persistência em memória ou JSON local**. Multi-instância não é suportado.
 - **Câmera requer consentimento explícito** (`LIBERO_CAMERA_CONSENT=true`).
-- **Câmera e edge não podem rodar em processos distintos** no mesmo `/dev/videoN`.
+- **O processo edge é o único dono da câmera física**; a API MCP não abre `/dev/videoN` e serve apenas um placeholder.
+- O status de sensores só é confiável quando o edge está conectado e reportando em `http://localhost:8081/status`.
+- Eventos capturados pelo edge são registrados no armazenamento local. O overlay WebSocket é acionado pela rota de demonstração; o envio automático de eventos do edge e notificações remotas ainda não estão implementados.
 - **Microfone** depende do ambiente (ruído, latência do PipeWire no Linux).
 - **Groq Whisper** tem latência (~1-2s). Não é transcrição local.
 - **Bedrock** requer credenciais AWS. Sem elas, fallback offline é usado.
@@ -310,7 +313,20 @@ pytest tests/ -v
 
 ---
 
-## Documentação Adicional
+## Hackathon e materiais de apresentação
+
+- Trilha principal pretendida: **Alexa+**, com o servidor MCP em `POST /mcp` e a conversa do dashboard chamando `initialize`, `notifications/initialized`, `tools/list` e `tools/call`.
+- O servidor anuncia MCP `2025-11-25`, usa respostas JSON no transporte Streamable HTTP e responde `405` ao GET porque não oferece stream SSE. A interoperabilidade ainda deve ser conferida com um cliente MCP antes de afirmar conformidade completa.
+- Para demonstrar Bedrock no desafio **AWS Builder**, configure `BEDROCK_MODEL_ID`, credenciais via AWS CLI/profile e `LIBERO_LLM_PROVIDER=bedrock`. A conversa mostra qual provedor realmente respondeu; só selecione o mini desafio se a gravação mostrar “Amazon Bedrock”.
+- O vídeo de submissão precisa ser público, em inglês e ter menos de 3 minutos. Inclua também o feedback escrito dos produtos/SDKs realmente usados e uma lista das mudanças feitas durante o hackathon.
+- Libero não está sendo submetido às trilhas Fire TV, Bee ou Ring como integração concluída.
+
+Materiais para preparar a apresentação:
+
+- [Pitch em português e inglês, diferenciação e posicionamento](docs/PITCH_LIBERO.md)
+- [Roteiro do vídeo demo, plano de contingência e checklist](docs/ROTEIRO_DEMO_VIDEO.md)
+
+## Documentação técnica
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Arquitetura detalhada
 - [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) — Governança e auditoria

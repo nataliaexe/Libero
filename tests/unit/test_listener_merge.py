@@ -5,12 +5,61 @@ from unittest.mock import patch
 
 import numpy as np
 import pytest
+from types import SimpleNamespace
 
 sys.path.insert(0, ".")
 
-from edge.capture.listener import JANELA_MERGE_VOZ, Listener
+from edge.capture.listener import JANELA_MERGE_VOZ, Listener, _transcricao_plausivel
 from scripts.diagnostico_audio import _capturar_isolado, calcular_snr
 from edge import main
+
+
+def test_transcricao_groq_detecta_idioma_sem_forcar_ingles(monkeypatch):
+    chamadas = []
+
+    class FakeTranscriptions:
+        def create(self, **kwargs):
+            chamadas.append(kwargs)
+            return SimpleNamespace(text="hello", language="english")
+
+    fake_groq = SimpleNamespace(audio=SimpleNamespace(transcriptions=FakeTranscriptions()))
+    monkeypatch.setattr("edge.capture.listener._groq", fake_groq)
+    monkeypatch.setattr("edge.capture.listener.WHISPER_DISPONIVEL", False)
+    monkeypatch.setattr("edge.capture.listener.SPEECH_LANGUAGE", "auto")
+    listener = Listener()
+
+    texto = listener._transcrever(np.full(1600, 0.1, dtype=np.float32))
+
+    assert texto == "hello"
+    assert "language" not in chamadas[0]
+    assert chamadas[0]["response_format"] == "verbose_json"
+    assert listener.ultimo_idioma == "en"
+
+
+def test_transcricao_groq_descarta_idioma_nao_suportado(monkeypatch):
+    class FakeTranscriptions:
+        def create(self, **kwargs):
+            return SimpleNamespace(
+                text="Hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn",
+                language="vietnamese",
+            )
+
+    fake_groq = SimpleNamespace(audio=SimpleNamespace(transcriptions=FakeTranscriptions()))
+    monkeypatch.setattr("edge.capture.listener._groq", fake_groq)
+    monkeypatch.setattr("edge.capture.listener.WHISPER_DISPONIVEL", False)
+    listener = Listener()
+
+    texto = listener._transcrever(np.full(1600, 0.1, dtype=np.float32))
+
+    assert texto == ""
+    assert "Idioma de transcrição não suportado" in listener.ultimo_erro_transcricao
+
+
+def test_transcricao_longa_demais_para_audio_curto_e_improvavel():
+    alucinacao = "Hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn"
+
+    assert not _transcricao_plausivel(alucinacao, 0.3)
+    assert _transcricao_plausivel("No.", 0.3)
 
 
 def test_blocos_de_voz_dentro_da_janela_sao_unidos(monkeypatch):

@@ -9,25 +9,25 @@
   --surface-glass: rgba(255, 255, 255, 0.7);
   --border: #e8e2da;
   --border-strong: #d4cdc4;
-  
+
   --primary: #7c5cbf;
   --primary-hover: #6a4aad;
   --primary-soft: #ede7f6;
-  
+
   --accent: #e94560;
   --success: #3fb950;
   --warning: #d29922;
   --danger: #da3633;
-  
+
   --text: #1a1a2e;
   --text-soft: #4a4a5e;
   --muted: #8b8b9e;
   --muted-soft: #b0b0be;
-  
+
   --shadow-sm: 0 1px 2px rgba(26, 26, 46, 0.04);
   --shadow-md: 0 4px 12px rgba(26, 26, 46, 0.06);
   --shadow-lg: 0 12px 32px rgba(26, 26, 46, 0.08);
-  
+
   --radius-sm: 8px;
   --radius: 12px;
   --radius-lg: 16px;
@@ -55,33 +55,11 @@ html, body {
    ORBS (fundo decorativo)
    ============================================================ */
 
-.orb {
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(80px);
-  opacity: 0.4;
-  pointer-events: none;
-  z-index: 0;
-}
 
-.orb.one {
-  width: 400px;
-  height: 400px;
-  background: radial-gradient(circle, #7c5cbf, transparent);
-  top: -100px;
-  right: -100px;
-  animation: float 20s ease-in-out infinite;
-}
 
-.orb.two {
-  width: 500px;
-  height: 500px;
-  background: radial-gradient(circle, #e94560, transparent);
-  bottom: -150px;
-  left: -150px;
-  opacity: 0.25;
-  animation: float 25s ease-in-out infinite reverse;
-}
+
+
+
 
 @keyframes float {
   0%, 100% { transform: translate(0, 0) scale(1); }
@@ -188,7 +166,7 @@ html, body {
 /* Layout com sidebar */
 .layout {
   display: grid;
-  grid-template-columns: 200px 1fr;
+  grid-template-columns: 240px 1fr;
   gap: 32px;
 }
 
@@ -614,8 +592,12 @@ button.quiet:hover {
 }
 
 .elder-head .login-icon {
+  display: block;
+  width: 88px;
+  height: 88px;
+  object-fit: contain;
   border-radius: 20px;
-  margin-bottom: 24px;
+  margin: 0 auto 20px;
   box-shadow: 0 12px 32px rgba(124, 92, 191, 0.2);
 }
 
@@ -1679,6 +1661,23 @@ aside .privacy-title {
   height: 8px !important;
 }
 
+/* Keep the marker and label together, including longer English nav labels. */
+.nav a {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  white-space: nowrap !important;
+}
+
+.nav a::before {
+  flex: 0 0 6px !important;
+  margin-right: 0 !important;
+}
+
+.nav a.active::before {
+  flex-basis: 8px !important;
+}
+
 /* ============================================================
    TRANSIÇÕES MELHORADAS
    ============================================================ */
@@ -1715,3 +1714,82 @@ button, .btn, .card, .alert-card, .nav a, .chat-bubble {
   font-weight: 600 !important;
 }
 
+/* Corrigir quebra de linha no menu lateral */
+.nav a {
+  display: flex !important;
+  align-items: center !important;
+  white-space: nowrap !important; /* Impede a quebra de linha */
+  line-height: 1.2 !important;
+}
+
+/* Ajustar a bolinha para não empurrar o texto */
+.nav a::before {
+  flex-shrink: 0 !important;
+  margin-top: 0 !important;
+}
+
+
+/* ============================================================
+   FUNDO LAVA LAMP DEFINITIVO
+   ============================================================ */
+
+html {
+  background: #f7f4f0 !important;
+  min-height: 100vh;
+}
+
+body {
+  background: transparent !important;
+  min-height: 100vh;
+  position: relative;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background:
+    radial-gradient(circle at 20% 30%, rgba(124, 92, 191, 0.25) 0%, transparent 45%),
+    radial-gradient(circle at 80% 70%, rgba(233, 69, 96, 0.18) 0%, transparent 45%),
+    radial-gradient(circle at 50% 50%, rgba(210, 153, 34, 0.12) 0%, transparent 45%),
+    #f7f4f0;
+  background-size: 200% 200%, 200% 200%, 200% 200%, 100% 100%;
+  animation: lavaLamp 35s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+@keyframes lavaLamp {
+  0% {
+    background-position: 0% 0%, 100% 100%, 50% 50%, 0 0;
+  }
+  33% {
+    background-position: 30% 60%, 70% 30%, 20% 80%, 0 0;
+  }
+  66% {
+    background-position: 60% 20%, 40% 80%, 80% 20%, 0 0;
+  }
+  100% {
+    background-position: 100% 100%, 0% 0%, 50% 50%, 0 0;
+  }
+}
+
+/* Garantir que o conteúdo fica por cima */
+.shell, .elder-page, .topbar, .card, .nav {
+  position: relative;
+  z-index: 1;
+}
+
+/* Topbar com efeito de vidro fosco */
+.topbar {
+  background: rgba(255, 255, 255, 0.55) !important;
+  backdrop-filter: blur(20px) !important;
+  -webkit-backdrop-filter: blur(20px) !important;
+}
+
+/* Cards com leve transparência para o fundo aparecer */
+.card {
+  background: rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: blur(10px) !important;
+  -webkit-backdrop-filter: blur(10px) !important;
+}

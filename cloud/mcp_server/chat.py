@@ -6,12 +6,17 @@ Armazena conversas entre idoso, Libero e cuidador.
 import os
 import json
 import re
-import os
 import tempfile
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - non-POSIX development platforms
+    fcntl = None
 
 DATA_DIR = Path.home() / "libero" / "data" / "chat"
 DATA_DIR.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -38,6 +43,36 @@ class ChatStore:
                         self.conversas[idoso_id] = dados
             except Exception as e:
                 print(f"[Libero Chat] Erro ao carregar {arquivo}: {e}")
+
+    @contextmanager
+    def _lock_arquivo(self):
+        """Serialize edge and API processes writing the same local chat JSON."""
+        if fcntl is None:
+            yield
+            return
+        lock_path = DATA_DIR / ".chatstore.lock"
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            os.fchmod(descriptor, 0o600)
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            yield
+        finally:
+            fcntl.flock(descriptor, fcntl.LOCK_UN)
+            os.close(descriptor)
+
+    def _recarregar_idoso(self, idoso_id):
+        """Refresh one resident from disk so long-running processes see each other."""
+        self._validar_idoso(idoso_id)
+        arquivo = DATA_DIR / f"{idoso_id}.json"
+        try:
+            with arquivo.open("r", encoding="utf-8") as handle:
+                dados = json.load(handle)
+            if dados.get("idoso_id") == idoso_id:
+                self.conversas[idoso_id] = dados
+        except FileNotFoundError:
+            self.conversas.pop(idoso_id, None)
+        except Exception as e:
+            print(f"[Libero Chat] Erro ao atualizar {arquivo}: {e}")
     
     def _salvar(self, idoso_id):
         """Salva conversas em disco."""
@@ -86,9 +121,10 @@ class ChatStore:
             tipo: "normal", "memoria", "emergencia"
             metadata: dict com dados extras
         """
-        with _lock:
+        with _lock, self._lock_arquivo():
+            self._recarregar_idoso(idoso_id)
             self._init_idoso(idoso_id)
-            
+
             msg = {
                 "id": str(uuid.uuid4())[:8],
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -97,22 +133,24 @@ class ChatStore:
                 "tipo": tipo,
                 "metadata": metadata or {}
             }
-            
+
             self.conversas[idoso_id]["mensagens"].append(msg)
-            
+
             # Limitar a 1000 mensagens por idoso
             if len(self.conversas[idoso_id]["mensagens"]) > 1000:
                 self.conversas[idoso_id]["mensagens"] = \
                     self.conversas[idoso_id]["mensagens"][-1000:]
-            
+
             self._salvar(idoso_id)
             return msg
     
     def listar_mensagens(self, idoso_id, limite=50, offset=0):
         """Lista mensagens com paginação."""
-        self._init_idoso(idoso_id)
-        mensagens = self.conversas[idoso_id]["mensagens"]
-        
+        with _lock, self._lock_arquivo():
+            self._recarregar_idoso(idoso_id)
+            self._init_idoso(idoso_id)
+            mensagens = list(self.conversas[idoso_id]["mensagens"])
+
         # Ordenar por timestamp (mais recente primeiro)
         mensagens_ordenadas = sorted(
             mensagens,
@@ -124,24 +162,26 @@ class ChatStore:
     
     def listar_memorias(self, idoso_id):
         """Lista apenas mensagens do tipo memória."""
-        self._init_idoso(idoso_id)
-        return [
-            m for m in self.conversas[idoso_id]["mensagens"]
-            if m["tipo"] == "memoria"
-        ]
+        with _lock, self._lock_arquivo():
+            self._recarregar_idoso(idoso_id)
+            self._init_idoso(idoso_id)
+            mensagens = list(self.conversas[idoso_id]["mensagens"])
+        return [m for m in mensagens if m.get("tipo") == "memoria"]
     
     def listar_emergencias(self, idoso_id):
         """Lista apenas emergências."""
-        self._init_idoso(idoso_id)
-        return [
-            m for m in self.conversas[idoso_id]["mensagens"]
-            if m["tipo"] == "emergencia"
-        ]
+        with _lock, self._lock_arquivo():
+            self._recarregar_idoso(idoso_id)
+            self._init_idoso(idoso_id)
+            mensagens = list(self.conversas[idoso_id]["mensagens"])
+        return [m for m in mensagens if m.get("tipo") == "emergencia"]
     
     def estatisticas(self, idoso_id):
         """Estatísticas do chat."""
-        self._init_idoso(idoso_id)
-        mensagens = self.conversas[idoso_id]["mensagens"]
+        with _lock, self._lock_arquivo():
+            self._recarregar_idoso(idoso_id)
+            self._init_idoso(idoso_id)
+            mensagens = list(self.conversas[idoso_id]["mensagens"])
         
         return {
             "total_mensagens": len(mensagens),

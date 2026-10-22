@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Groq
+LLM_PROVIDER = os.getenv("LIBERO_LLM_PROVIDER", "auto").strip().lower()
 try:
     from groq import Groq
     GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
@@ -31,28 +32,71 @@ except Exception:
     BEDROCK_MODEL = None
 
 
-SYSTEM_PROMPT = """Você é o Libero, um companheiro para idosos com Alzheimer ou demência.
+SYSTEM_PROMPT = """Você é Libero, um companheiro gentil para pessoas idosas.
+Responda sempre em português brasileiro natural, com no máximo duas frases curtas.
+Não use markdown, listas, emojis ou títulos. Acolha o sentimento sem discutir fatos
+ou reforçar uma crença angustiante. Fale de forma simples e use o nome da pessoa
+com naturalidade. Considere o histórico recente para manter o fio da conversa e
+resgatar detalhes que a pessoa acabou de contar. Nunca diga que acionou ajuda ou
+um cuidador se nenhuma ação externa foi realmente executada."""
 
-REGRAS:
-1. Responda SEMPRE em português brasileiro.
-2. Máximo 2 frases curtas.
-3. NUNCA use markdown, asteriscos, bullets, emojis, títulos.
-4. NUNCA explique o que você está fazendo.
-5. Fale como uma pessoa fala. Simples. Gentil.
-6. Valide a emoção, nunca corrija a realidade.
-7. Use o nome dele naturalmente.
-
-Exemplos CORRETOS:
-- "Entendo, Dona Maria. Me conta mais sobre isso."
-- "Sua mãe deve ter sido especial. Como ela era?"
-- "Estou aqui com você. Está tudo bem."
-
-Exemplos ERRADOS (não faça):
-- "## Resposta para Dona Maria"
-- "**Dona Maria**, percebi que..."
-- "✓ Notificando cuidador"
-- "Vou te ajudar com isso! 😊"
+SYSTEM_PROMPT_EN = """You are Libero, a companion for older adults living with Alzheimer's or dementia.
+RULES:
+1. Always reply in natural, simple English.
+2. Use at most two short sentences.
+3. Never use markdown, bullets, emojis, or titles.
+4. Validate the feeling; never argue about the facts.
+5. Speak gently and use the person's name naturally.
+6. Use the recent conversation history to keep context and recall details the person just shared.
+7. Never claim that you contacted a caregiver or emergency service unless that action actually happened.
+Example: “I hear that you miss home. What do you miss most about it?”
 """
+
+
+def detectar_idioma(texto, fallback="en"):
+    """Lightweight fallback for typed input when speech recognition gives no language."""
+    text = f" {str(texto or '').lower()} "
+    if re.search(r"\b(?:oi|olá|ola)\b", text):
+        return "pt-BR"
+    portugues = (
+        " você ", " estou ", " quero ", " preciso ", " não ", " nao ",
+        " oi ", " olá ", " ola ", " bom dia ", " boa tarde ", " boa noite ",
+        " minha ", " meu ", " mãe ", " mae ", " pai ", " casa ",
+    )
+    ingles = (
+        " hello ", " hi ", " hey ", " i'm ", " i am ", " i need ",
+        " i want ", " how are ", " good morning ", " good evening ",
+        " my mother ", " my father ", " home ", " thank you ",
+    )
+    if any(marker in text for marker in portugues):
+        return "pt-BR"
+    if any(marker in text for marker in ingles):
+        return "en"
+    fallback = str(fallback or "en").lower()
+    return "pt-BR" if fallback.startswith("pt") else "en"
+
+
+def _provider_messages(mensagem, contexto, system_prompt):
+    system = system_prompt
+    preferred_name = contexto.get("nome")
+    if preferred_name:
+        system += f"\n\nThe person's preferred name is {preferred_name}."
+    memories = contexto.get("memorias_salvas") or []
+    if memories:
+        resumo_memorias = "\n".join(
+            f"- {str(item.get('resumo') or item.get('texto_original') or '')[:240]}"
+            for item in memories[-4:]
+        )
+        system += "\n\nRelevant saved family memories (use only when helpful):\n" + resumo_memorias
+
+    messages = [{"role": "system", "content": system}]
+    for item in (contexto.get("historico") or [])[-8:]:
+        role = item.get("role")
+        content = item.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str) and content.strip():
+            messages.append({"role": role, "content": content[:1000]})
+    messages.append({"role": "user", "content": str(mensagem)})
+    return messages
 
 
 def _limpar_resposta(texto):
@@ -98,69 +142,84 @@ def _fallback(mensagem, nome):
         return f"{nome}, estou aqui com você. Me conta mais."
 
 
-def conversar(mensagem, contexto=None):
-    """Conversa com o idoso."""
+def _fallback_en(mensagem, nome):
+    name = nome or "Maria"
+    if any(term in mensagem.lower() for term in ("home", "house", "go back")):
+        return f"I hear that you miss home, {name}. What do you miss most about it?"
+    if "work" in mensagem.lower():
+        return f"You worked hard for many years, {name}. What do you remember most about it?"
+    if any(term in mensagem.lower() for term in ("sad", "lonely", "alone")):
+        return f"I'm sorry this feels hard, {name}. Would you like to tell me more?"
+    return f"I'm here with you, {name}. Tell me a little more."
+
+
+def conversar_com_provedor(mensagem, contexto=None):
+    """Return the response and the provider that actually generated it."""
     if contexto is None:
         contexto = {}
-    
     nome = contexto.get("nome", "")
-    
-    # 1. Groq
-    if _groq:
+    language = str(
+        contexto.get("language") or detectar_idioma(mensagem)
+    ).lower()
+    english = language.startswith("en") or language == "english"
+    system_prompt = SYSTEM_PROMPT_EN if english else SYSTEM_PROMPT
+    messages = _provider_messages(mensagem, contexto, system_prompt)
+
+    preferencia = LLM_PROVIDER if LLM_PROVIDER in {"auto", "groq", "bedrock", "offline"} else "auto"
+    provedores = ["groq", "bedrock"]
+    if preferencia == "bedrock":
+        provedores = ["bedrock", "groq"]
+    elif preferencia == "offline":
+        provedores = []
+
+    for provedor in provedores:
+        if provedor == "groq" and not _groq:
+            continue
+        if provedor == "bedrock" and not _bedrock:
+            continue
         try:
-            response = _groq.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Nome: {nome}\nIdoso: {mensagem}"}
-                ],
-                max_tokens=200,
-                temperature=0.7,
-                **({"reasoning_effort": "low"} if GROQ_MODEL and "gpt-oss" in GROQ_MODEL else {}),
-            )
-            texto = response.choices[0].message.content
-            limpo = _limpar_resposta(texto)
+            if provedor == "groq":
+                response = _groq.chat.completions.create(
+                    model=GROQ_MODEL,
+                    messages=messages,
+                    max_tokens=200,
+                    temperature=0.7,
+                    **({"reasoning_effort": "low"} if GROQ_MODEL and "gpt-oss" in GROQ_MODEL else {}),
+                )
+                texto = response.choices[0].message.content
+                limpo = _limpar_resposta(texto)
+                if not limpo:
+                    response = _groq.chat.completions.create(
+                        model=GROQ_MODEL,
+                        messages=messages,
+                        max_tokens=200,
+                        temperature=0.3,
+                        **({"reasoning_effort": "low"} if GROQ_MODEL and "gpt-oss" in GROQ_MODEL else {}),
+                    )
+                    limpo = _limpar_resposta(response.choices[0].message.content)
+            else:
+                response = _bedrock.invoke_model(
+                    modelId=BEDROCK_MODEL,
+                    body=json.dumps({
+                        "anthropic_version": "bedrock-2023-05-31",
+                        "max_tokens": 200,
+                        "system": system_prompt,
+                        "messages": messages[1:],
+                    }),
+                )
+                payload = json.loads(response["body"].read())
+                limpo = _limpar_resposta(payload["content"][0]["text"])
             if limpo:
-                return limpo
-            # Se vazio, tenta de novo com temperatura menor
-            response = _groq.chat.completions.create(
-                model=GROQ_MODEL,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Nome: {nome}\nIdoso: {mensagem}"}
-                ],
-                max_tokens=200,
-                temperature=0.3,
-                **({"reasoning_effort": "low"} if GROQ_MODEL and "gpt-oss" in GROQ_MODEL else {}),
-            )
-            texto = response.choices[0].message.content
-            limpo = _limpar_resposta(texto)
-            if limpo:
-                return limpo
+                return {"resposta": limpo, "provedor": provedor}
         except Exception as e:
-            print(f"[Libero] Groq falhou: {e}")
-    
-    # 2. Bedrock
-    if _bedrock:
-        try:
-            response = _bedrock.invoke_model(
-                modelId=BEDROCK_MODEL,
-                body=json.dumps({
-                    "anthropic_version": "bedrock-2023-05-31",
-                    "max_tokens": 200,
-                    "system": SYSTEM_PROMPT,
-                    "messages": [{"role": "user", "content": f"Nome: {nome}\nIdoso: {mensagem}"}]
-                })
-            )
-            resultado = json.loads(response["body"].read())
-            limpo = _limpar_resposta(resultado["content"][0]["text"])
-            if limpo:
-                return limpo
-        except Exception as e:
-            print(f"[Libero] Bedrock falhou: {e}")
-    
-    # 3. Fallback
-    return _fallback(mensagem, nome)
+            print(f"[Libero] {provedor} falhou: {e}")
+
+    return {"resposta": _fallback_en(mensagem, nome) if english else _fallback(mensagem, nome), "provedor": "offline"}
+
+
+def conversar(mensagem, contexto=None):
+    """Backward-compatible response-only helper."""
+    return conversar_com_provedor(mensagem, contexto)["resposta"]
 
 
 if __name__ == "__main__":

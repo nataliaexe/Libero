@@ -6,7 +6,7 @@ import os
 import json
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
-from fastapi import FastAPI, Request, Query
+from fastapi import FastAPI, Request, Query, Response
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -54,14 +54,20 @@ async def lifespan(app):
     yield
 
 
-app = FastAPI(title="Libero MCP Server", version="1.4.0", lifespan=lifespan)
+LIBERO_VERSION = "1.5.0"
+MCP_PROTOCOL_VERSION = "2025-11-25"
+
+app = FastAPI(title="Libero MCP Server", version=LIBERO_VERSION, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Libero-Token"],
+    allow_headers=[
+        "Authorization", "Content-Type", "X-Libero-Token",
+        "MCP-Protocol-Version", "Last-Event-ID",
+    ],
 )
 
 MCP_PORT = int(os.getenv("MCP_PORT", "8080"))
@@ -164,8 +170,9 @@ async def me_endpoint(request: Request):
 async def root():
     return {
         "name": "Libero MCP Server",
-        "version": "1.3.0",
-        "spec": "2025-11-25",
+        "version": LIBERO_VERSION,
+        "protocol_version": MCP_PROTOCOL_VERSION,
+        "transport": "streamable-http-json",
         "ferramentas": len(tools.FERRAMENTAS)
     }
 
@@ -221,63 +228,134 @@ async def executar_tool(tool_name: str, request: Request):
     })
 
 
+def _mcp_jsonrpc_error(request_id, code, message, status_code=200):
+    return JSONResponse(
+        {"jsonrpc": "2.0", "id": request_id, "error": {"code": code, "message": message}},
+        status_code=status_code,
+    )
+
+
+def _mcp_origin_allowed(request: Request):
+    origin = request.headers.get("origin")
+    return not origin or origin.rstrip("/") in ALLOWED_ORIGINS
+
+
+@app.get("/mcp")
+async def mcp_get(request: Request):
+    """This server uses JSON responses and does not open a server SSE stream."""
+    if not _mcp_origin_allowed(request):
+        return Response(status_code=403)
+    return Response(status_code=405, headers={"Allow": "POST"})
+
+
 @app.post("/mcp")
 async def mcp_handler(request: Request):
-    token = auth.extrair_token(request)
-    
+    """MCP Streamable HTTP endpoint using JSON responses (no SSE stream)."""
+    if not _mcp_origin_allowed(request):
+        return _mcp_jsonrpc_error(None, -32000, "Origin não autorizado", 403)
+
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    if content_type != "application/json":
+        return JSONResponse({"error": "Content-Type deve ser application/json"}, status_code=415)
+    accepted_types = {
+        item.split(";", 1)[0].strip().lower()
+        for item in request.headers.get("accept", "").split(",")
+    }
+    if not {"application/json", "text/event-stream"}.issubset(accepted_types):
+        return JSONResponse({"error": "Accept deve incluir application/json e text/event-stream"}, status_code=406)
+
     try:
         body = await request.json()
     except Exception:
-        return JSONResponse({
-            "jsonrpc": "2.0",
-            "error": {"code": -32700, "message": "Parse error"},
-            "id": None
-        }, status_code=400)
-    
+        return _mcp_jsonrpc_error(None, -32700, "Parse error", 400)
+
+    if not isinstance(body, dict) or body.get("jsonrpc") != "2.0":
+        return _mcp_jsonrpc_error(None, -32600, "Invalid Request", 400)
+
     metodo = body.get("method")
     params = body.get("params", {})
-    req_id = body.get("id")
-    
+    request_id = body.get("id")
+    if not isinstance(metodo, str) or not isinstance(params, dict):
+        return _mcp_jsonrpc_error(request_id, -32600, "Invalid Request", 400)
+
+    if metodo != "initialize" and request.headers.get("mcp-protocol-version") != MCP_PROTOCOL_VERSION:
+        return _mcp_jsonrpc_error(request_id, -32600, "MCP-Protocol-Version ausente ou não suportada", 400)
+
+    # JSON-RPC notifications never receive a JSON-RPC response. MCP requires
+    # 202 with an empty body when the server accepts a notification.
+    if "id" not in body:
+        if metodo in {
+            "notifications/initialized",
+            "notifications/cancelled",
+            "notifications/progress",
+        } or metodo.startswith("notifications/"):
+            return Response(status_code=202)
+        return _mcp_jsonrpc_error(None, -32600, "Invalid Request", 400)
+
+    if request_id is None or isinstance(request_id, (dict, list, bool)):
+        return _mcp_jsonrpc_error(None, -32600, "Invalid Request", 400)
+
     if metodo == "initialize":
+        client_version = params.get("protocolVersion")
+        client_info = params.get("clientInfo")
+        if (not isinstance(client_version, str)
+                or not isinstance(params.get("capabilities"), dict)
+                or not isinstance(client_info, dict)
+                or not isinstance(client_info.get("name"), str)
+                or not isinstance(client_info.get("version"), str)):
+            return _mcp_jsonrpc_error(request_id, -32602, "Parâmetros de initialize inválidos")
         return {
             "jsonrpc": "2.0",
-            "id": req_id,
+            "id": request_id,
             "result": {
-                "protocolVersion": "2025-11-25",
+                "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "libero", "version": "1.4.0"}
-            }
+                "serverInfo": {"name": "libero", "version": LIBERO_VERSION},
+                "instructions": (
+                    "Libero is a research prototype for home-care support. "
+                    "Safety signals are experimental and do not contact emergency services."
+                ),
+            },
         }
-    
+
+    token = auth.extrair_token(request)
+    if metodo == "ping":
+        return {"jsonrpc": "2.0", "id": request_id, "result": {}}
+
     if metodo == "tools/list":
         try:
             auth.autorizar("listar_ferramentas", token)
         except auth.AuthError as e:
-            return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32001, "message": str(e)}}
-        
-        return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools.listar_ferramentas()}}
-    
+            return _mcp_jsonrpc_error(request_id, -32001, str(e))
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": {"tools": tools.listar_ferramentas()},
+        }
+
     if metodo == "tools/call":
         nome = params.get("name")
         argumentos = params.get("arguments", {})
-        
+        if not isinstance(nome, str) or not isinstance(argumentos, dict):
+            return _mcp_jsonrpc_error(request_id, -32602, "Parâmetros de tools/call inválidos")
         try:
             auth.autorizar(nome, token)
             auth.autorizar_argumentos(nome, token, argumentos)
         except auth.AuthError as e:
-            return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32001, "message": str(e)}}
-        
+            return _mcp_jsonrpc_error(request_id, -32001, str(e))
+
         resultado = tools.executar(nome, argumentos)
-        
+        falhou = isinstance(resultado, dict) and "erro" in resultado
         return {
             "jsonrpc": "2.0",
-            "id": req_id,
+            "id": request_id,
             "result": {
-                "content": [{"type": "text", "text": json.dumps(resultado, ensure_ascii=False)}]
-            }
+                "content": [{"type": "text", "text": json.dumps(resultado, ensure_ascii=False)}],
+                "isError": falhou,
+            },
         }
-    
-    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Método desconhecido: {metodo}"}}
+
+    return _mcp_jsonrpc_error(request_id, -32601, f"Método desconhecido: {metodo}")
 
 
 

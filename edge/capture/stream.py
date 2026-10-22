@@ -17,44 +17,68 @@ import os
 # Tentar MediaPipe novo (tasks)
 MEDIAPIPE_DISPONIVEL = False
 POSE_LANDMARKER = None
+_MEDIAPIPE_TENTADO = False
+_MEDIAPIPE_STATUS = "nao_iniciado"
+_MEDIAPIPE_LOCK = threading.Lock()
 
-try:
-    import mediapipe as mp
-    
-    if hasattr(mp, "tasks"):
-        from mediapipe.tasks import python as mp_python
-        from mediapipe.tasks.python import vision as mp_vision
-        from mediapipe.framework.formats import landmark_pb2
-        
-        modelo_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
-            "models", "pose_landmarker_lite.task"
-        )
-        
-        if os.path.exists(modelo_path):
+
+def _inicializar_mediapipe():
+    """Load optional pose support once."""
+    global MEDIAPIPE_DISPONIVEL, POSE_LANDMARKER, _MEDIAPIPE_TENTADO, _MEDIAPIPE_STATUS
+    if _MEDIAPIPE_TENTADO:
+        return MEDIAPIPE_DISPONIVEL
+    with _MEDIAPIPE_LOCK:
+        if _MEDIAPIPE_TENTADO:
+            return MEDIAPIPE_DISPONIVEL
+        _MEDIAPIPE_TENTADO = True
+        _MEDIAPIPE_STATUS = "inicializando"
+        try:
+            import mediapipe as mp
+            if not hasattr(mp, "tasks"):
+                _MEDIAPIPE_STATUS = "indisponivel"
+                return False
+            from mediapipe.tasks import python as mp_python
+            from mediapipe.tasks.python import vision as mp_vision
+            modelo_path = os.path.join(
+                os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                "models", "pose_landmarker_lite.task"
+            )
+            if not os.path.exists(modelo_path):
+                _MEDIAPIPE_STATUS = "modelo_ausente"
+                print(f"[Libero] Modelo não encontrado: {modelo_path}; usando OpenCV")
+                return False
             base_options = mp_python.BaseOptions(model_asset_path=modelo_path)
             options = mp_vision.PoseLandmarkerOptions(
                 base_options=base_options,
                 running_mode=mp_vision.RunningMode.IMAGE,
                 min_pose_detection_confidence=0.5,
                 min_pose_presence_confidence=0.5,
-                min_tracking_confidence=0.5
+                min_tracking_confidence=0.5,
             )
             POSE_LANDMARKER = mp_vision.PoseLandmarker.create_from_options(options)
             MEDIAPIPE_DISPONIVEL = True
-            print("[Libero] MediaPipe 1.x (tasks) OK")
-        else:
-            print(f"[Libero] Modelo não encontrado: {modelo_path}")
-            print("[Libero] Usando OpenCV puro")
-    elif hasattr(mp, "solutions"):
-        MEDIAPIPE_DISPONIVEL = False
-        print("[Libero] MediaPipe solutions — não usado")
-    else:
-        print("[Libero] MediaPipe desconhecido — usando OpenCV puro")
-except ImportError:
-    print("[Libero] MediaPipe não instalado — usando OpenCV puro")
-except Exception as e:
-    print(f"[Libero] MediaPipe erro: {e} — usando OpenCV puro")
+            _MEDIAPIPE_STATUS = "pronto"
+            print("[Libero] MediaPipe pose pronto")
+        except Exception as e:
+            _MEDIAPIPE_STATUS = "indisponivel"
+            print(f"[Libero] MediaPipe indisponível: {e}; usando OpenCV")
+        return MEDIAPIPE_DISPONIVEL
+
+
+def _agendar_inicializacao_mediapipe():
+    """Initialize pose in the background so camera streaming stays responsive."""
+    if _MEDIAPIPE_TENTADO:
+        return
+    threading.Thread(
+        target=_inicializar_mediapipe,
+        name="libero-mediapipe-init",
+        daemon=True,
+    ).start()
+
+
+def status_pose():
+    """Expose whether pose-based fall detection is loading, ready, or unavailable."""
+    return {"disponivel": MEDIAPIPE_DISPONIVEL, "estado": _MEDIAPIPE_STATUS}
 
 
 class CameraLibero:
@@ -106,12 +130,17 @@ class CameraLibero:
                 f"Não foi possível abrir as câmeras {camera_ids[0]} ou {camera_ids[1]}. "
                 "Verifique as permissões e se os dispositivos estão conectados."
             )
+
+        _agendar_inicializacao_mediapipe()
         
         self.rodando = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
         print(f"[Libero Câmera] Iniciada (camera_id={self.camera_id})")
-        print(f"[Libero Câmera] MediaPipe: {'ATIVO' if MEDIAPIPE_DISPONIVEL else 'OpenCV puro'}")
+        print(
+            "[Libero Câmera] Quedas só serão avaliadas após o MediaPipe ficar pronto; "
+            "o fallback OpenCV não confirma quedas."
+        )
     
     def parar(self):
         self.rodando = False
@@ -175,7 +204,8 @@ class CameraLibero:
                 "confianca": queda["confianca"],
                 "dados": {
                     "angulo_corpo": queda.get("angulo"),
-                    "variacao": queda.get("variacao")
+                    "variacao": queda.get("variacao"),
+                    "metodo": pose_info.get("metodo"),
                 },
                 "timestamp": timestamp
             }
@@ -231,11 +261,14 @@ class CameraLibero:
         detectado = area_total > 5000
         confianca = min(area_total / 20000, 1.0) if detectado else 0.0
         
-        return {"detectado": detectado, "area": int(area_total), "confianca": confianca}
+        return {"detectado": False, "area": 0, "confianca": 0.0}
     
     def _detectar_pose_mediapipe(self, frame, largura, altura):
         """Pose via MediaPipe 1.x (tasks)."""
         try:
+            if not _inicializar_mediapipe():
+                return {"detectado": False}
+            import mediapipe as mp
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
             
@@ -330,6 +363,16 @@ class CameraLibero:
         """Detecta queda APENAS com múltiplos sinais fortes."""
         if not pose_info.get("detectado"):
             return {"detectado": False, "confianca": 0.0}
+
+        # Bounding boxes from frame differencing are not person poses. Their
+        # aspect ratio changes with shadows, camera motion, and objects, so the
+        # OpenCV fallback must never confirm a fall or trigger a family alert.
+        if pose_info.get("metodo") != "mediapipe":
+            return {
+                "detectado": False,
+                "confianca": 0.0,
+                "motivo": "detector_de_pose_indisponivel",
+            }
         
         angulo = pose_info.get("angulo", 0)
         

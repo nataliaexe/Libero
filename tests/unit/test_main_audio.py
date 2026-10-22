@@ -22,7 +22,9 @@ def test_falar_pausa_e_retorna_listener(monkeypatch):
     libero = main.Libero.__new__(main.Libero)
     libero.listener = FakeListener()
     libero.falando = False
-    monkeypatch.setattr(main, "falar", lambda _texto: None)
+    monkeypatch.setattr(main, "falar", lambda _texto, language=None: {
+        "metodo": "fake", "status": "ok"
+    })
     monkeypatch.setattr(main.time, "sleep", lambda _duracao: None)
 
     libero._falar_uma_vez("Estou aqui.")
@@ -36,7 +38,7 @@ def test_falar_retorna_listener_se_tts_falhar(monkeypatch):
     libero.listener = FakeListener()
     libero.falando = False
 
-    def falhar(_texto):
+    def falhar(_texto, language=None):
         raise RuntimeError("TTS indisponível")
 
     monkeypatch.setattr(main, "falar", falhar)

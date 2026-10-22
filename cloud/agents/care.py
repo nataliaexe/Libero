@@ -13,12 +13,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 REGION = os.getenv("AWS_REGION", "us-east-1")
-MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "anthropic.claude-3-sonnet-20240229-v1:0")
+MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "").strip()
 
 _bedrock = None
 
 def _get_bedrock():
     global _bedrock
+    if not MODEL_ID:
+        return None
     if _bedrock is None:
         try:
             _bedrock = boto3.client("bedrock-runtime", region_name=REGION)

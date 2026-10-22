@@ -29,8 +29,43 @@ class Orquestrador:
         self.idoso_id = idoso_id
         self.contexto = contexto or {}
         self.contexto.setdefault("camera_autorizada", False)
+        self.contexto.setdefault(
+            "language", os.getenv("LIBERO_DEFAULT_LANGUAGE", "en")
+        )
         self.historico = []
         self.timezone_offset = timezone_offset
+
+    def _contexto_conversa(self):
+        """Load a short, same-language history from persistent chat storage."""
+        try:
+            mensagens = get_store().listar_mensagens(self.idoso_id, limite=40)
+        except Exception as e:
+            print(f"[Libero] Histórico indisponível: {e}")
+            mensagens = []
+
+        idioma_atual = str(self.contexto.get("language", "en")).lower()
+        prefixo_idioma = "pt" if idioma_atual.startswith("pt") else "en"
+        historico = []
+        for item in reversed(mensagens):
+            autor = item.get("autor")
+            if autor not in {"idoso", "libero"}:
+                continue
+            idioma = str((item.get("metadata") or {}).get("language", "")).lower()
+            if idioma and ("pt" if idioma.startswith("pt") else "en") != prefixo_idioma:
+                continue
+            historico.append({
+                "role": "user" if autor == "idoso" else "assistant",
+                "content": item.get("texto", ""),
+            })
+
+        contexto = dict(self.contexto)
+        contexto["historico"] = historico[-8:]
+        try:
+            contexto["memorias_salvas"] = memory.listar_memorias(self.idoso_id, limite=4)
+        except Exception as e:
+            print(f"[Libero] Memórias anteriores indisponíveis: {e}")
+            contexto["memorias_salvas"] = []
+        return contexto
     
     def _agora_utc(self):
         """Timestamp UTC padronizado."""
@@ -50,6 +85,7 @@ class Orquestrador:
         """Persiste a interação para que o dashboard veja o resultado real."""
         try:
             store = get_store()
+            metadata = {"language": self.contexto.get("language", "pt-BR"), **(metadata or {})}
             if texto:
                 store.adicionar_mensagem(
                     self.idoso_id, "idoso", texto, tipo=tipo_texto, metadata=metadata
@@ -63,13 +99,19 @@ class Orquestrador:
         except Exception as e:
             print(f"[Libero] Erro ao salvar no chat: {e}")
     
-    def processar(self, texto, features_audio=None, features_visao=None, movimento=False):
+    def processar(self, texto, features_audio=None, features_visao=None, movimento=False, contexto_extra=None):
         """
         Processa entrada com análise contextual.
         
         Returns:
             dict com nível, ações, resposta
         """
+        if contexto_extra:
+            self.contexto.update(contexto_extra)
+        if texto and not (contexto_extra and contexto_extra.get("language")):
+            self.contexto["language"] = companion.detectar_idioma(
+                texto, self.contexto.get("language", "en")
+            )
         features_audio = features_audio or {}
         features_visao = features_visao or {}
         hora_local = self._hora_local()
@@ -156,6 +198,7 @@ class Orquestrador:
             return {
                 "nivel": resultado_seguranca["nivel"],
                 "nivel_nome": f"NIVEL_{resultado_seguranca['nivel']}",
+                "idioma": self.contexto.get("language", "en"),
                 "evento": evento,
                 "acoes": resultado_seguranca["acoes"],
                 "resposta": resposta,
@@ -183,8 +226,13 @@ class Orquestrador:
         
         # 5. Agir
         resposta = None
+        provedor_modelo = None
         if nivel in [Nivel.CONVERSA, Nivel.INTERVENCAO]:
-            resposta = companion.conversar(texto, self.contexto)
+            resposta_modelo = companion.conversar_com_provedor(
+                texto, self._contexto_conversa()
+            )
+            resposta = resposta_modelo["resposta"]
+            provedor_modelo = resposta_modelo["provedor"]
         
         self.historico.append({
             "timestamp_utc": self._agora_utc(),
@@ -196,7 +244,10 @@ class Orquestrador:
         tipo_mensagem = "memoria" if memoria_gravada else "normal"
         self._registrar_chat(
             texto, resposta, nivel.value, tipo_mensagem,
-            {"memoria_id": memoria_gravada.get("id")} if memoria_gravada else None,
+            {
+                **({"memoria_id": memoria_gravada.get("id")} if memoria_gravada else {}),
+                **({"provedor_modelo": provedor_modelo} if provedor_modelo else {}),
+            } or None,
             tipo_texto="normal",
             tipo_resposta="memoria" if memoria_gravada else "normal",
         )
@@ -205,7 +256,9 @@ class Orquestrador:
             "nivel": nivel.value,
             "nivel_nome": nivel.name,
             "nivel_descricao": descrever_nivel(nivel),
+            "idioma": self.contexto.get("language", "en"),
             "resposta": resposta,
+            "provedor_modelo": provedor_modelo,
             "memoria": memoria_gravada,
             "acoes": [{"tipo": "voz", "conteudo": resposta, "status": "preparada"}] if resposta else [],
             "acoes_externas_executadas": False,

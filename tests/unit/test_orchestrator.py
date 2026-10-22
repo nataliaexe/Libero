@@ -8,6 +8,13 @@ class StoreFake:
     def adicionar_mensagem(self, *args, **kwargs):
         self.mensagens.append((args, kwargs))
 
+    def listar_mensagens(self, _idoso_id, limite=50):
+        itens = [
+            {"autor": args[1], "texto": args[2], "metadata": kwargs.get("metadata", {})}
+            for args, kwargs in self.mensagens
+        ]
+        return list(reversed(itens))[:limite]
+
 
 def test_orquestrador_persiste_evento_de_seguranca(monkeypatch):
     store = StoreFake()
@@ -51,7 +58,11 @@ def test_memoria_so_marca_resposta_no_chat(monkeypatch):
         "gravar_memoria",
         lambda *_args: {"gravado": True, "memoria": {"id": "mem-1", "titulo": "História"}},
     )
-    monkeypatch.setattr(orchestrator.companion, "conversar", lambda *_args: "Que lembrança bonita.")
+    monkeypatch.setattr(
+        orchestrator.companion,
+        "conversar_com_provedor",
+        lambda *_args: {"resposta": "Que lembrança bonita.", "provedor": "offline"},
+    )
 
     orchestrator.Orquestrador("dona-maria").processar(
         "Quando eu era jovem, dançava com meu marido."
@@ -59,3 +70,26 @@ def test_memoria_so_marca_resposta_no_chat(monkeypatch):
 
     assert store.mensagens[0][1]["tipo"] == "normal"
     assert store.mensagens[1][1]["tipo"] == "memoria"
+
+
+def test_conversa_seguinte_recebe_historico_persistido(monkeypatch):
+    store = StoreFake()
+    contextos = []
+    monkeypatch.setattr(orchestrator, "get_store", lambda: store)
+    monkeypatch.setattr(orchestrator.memory, "listar_memorias", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(orchestrator.memory, "detectar_historia", lambda _texto: {"detectado": False})
+    monkeypatch.setattr(
+        orchestrator.companion,
+        "conversar_com_provedor",
+        lambda texto, contexto: contextos.append(contexto) or {
+            "resposta": f"I heard: {texto}", "provedor": "offline"
+        },
+    )
+    orq = orchestrator.Orquestrador("dona-maria", {"nome": "Maria", "language": "en"})
+
+    orq.processar("My dog was named Lucky.")
+    orq.processar("What was my dog's name?")
+
+    assert [item["content"] for item in contextos[1]["historico"]] == [
+        "My dog was named Lucky.", "I heard: My dog was named Lucky."
+    ]

@@ -15,11 +15,7 @@ source venv/bin/activate
 
 # Dependências
 pip install --upgrade pip
-pip install boto3 fastapi 'uvicorn[standard]' python-dotenv pydantic groq
-pip install openai-whisper sounddevice numpy scipy
-pip install opencv-python mediapipe
-pip install mcp
-pip install pytest pytest-asyncio
+pip install -r requirements.txt
 
 echo "[Libero] Ambiente configurado."
 echo "[Libero] Ative com: source venv/bin/activate"

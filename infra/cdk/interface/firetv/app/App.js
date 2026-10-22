@@ -4,18 +4,14 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { StyleSheet, Text, View, Image, Pressable, ScrollView } from 'react-native';
+import { StyleSheet, Text, View, Pressable, ScrollView, Alert } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
-import { Audio } from 'expo-av';
-
-const API_URL = process.env.LIBERO_API_URL || 'http://localhost:8080';
 
 export default function App() {
   const [tela, setTela] = useState('inicio');
-  const [idoso, setIdsoso] = useState({ nome: 'Dona Maria' });
+  const [idoso] = useState({ nome: 'Dona Maria' });
   const [hora, setHora] = useState(new Date().toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }));
-  const [memorias, setMemorias] = useState([]);
-  const [somAtual, setSomAtual] = useState(null);
+  const [memorias] = useState([]);
 
   // Atualizar hora
   useEffect(() => {
@@ -73,7 +69,7 @@ export default function App() {
   const TelaConversa = () => (
     <View style={styles.container}>
       <Text style={styles.titulo}>Conversar</Text>
-      <Text style={styles.instrucao}>Fale com o Libero</Text>
+      <Text style={styles.instrucao}>Protótipo: interação de voz ainda não conectada</Text>
       <View style={styles.avatar}>
         <Text style={styles.avatarTexto}>L</Text>
       </View>
@@ -86,35 +82,22 @@ export default function App() {
     <View style={[styles.container, styles.emergencia]}>
       <Text style={styles.tituloEmergencia}>Chamar Ajuda</Text>
       <Text style={styles.instrucaoEmergencia}>
-        Sua família será notificada imediatamente.
+        Demonstração experimental. Nenhuma mensagem ou chamada será enviada.
       </Text>
       <Pressable
         style={styles.botaoEmergencia}
         onPress={chamarEmergencia}
       >
-        <Text style={styles.botaoEmergenciaTexto}>CHAMAR AGORA</Text>
+        <Text style={styles.botaoEmergenciaTexto}>VER DEMONSTRAÇÃO</Text>
       </Pressable>
       <BotaoGrande titulo="Cancelar" onPress={() => setTela('inicio')} />
     </View>
   );
 
-  const chamarEmergencia = async () => {
-    try {
-      const resp = await fetch(`${API_URL}/mcp/tools/verificar_seguranca`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          idoso_id: 'dona-maria',
-          texto: 'Preciso de ajuda',
-          movimento: true
-        })
-      });
-      const dados = await resp.json();
-      console.log('Emergência:', dados);
-    } catch (e) {
-      console.error('Erro:', e);
-    }
-  };
+  const chamarEmergencia = () => Alert.alert(
+    'Demonstração',
+    'Nenhuma notificação foi enviada. O Libero não contata serviços de emergência.'
+  );
 
   // Roteamento
   if (tela === 'memorias') return <TelaMemorias />;

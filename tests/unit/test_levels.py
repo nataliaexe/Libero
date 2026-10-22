@@ -25,7 +25,8 @@ def test_conversa():
 
 def test_observacao():
     assert decidir_nivel("", 12, False) == Nivel.OBSERVACAO
-    assert decidir_nivel("Oi", 12, False) == Nivel.OBSERVACAO
+    assert decidir_nivel("Oi", 12, False) == Nivel.CONVERSA
+    assert decidir_nivel("Hello", 12, False) == Nivel.CONVERSA
 
 
 def test_pedido_de_ajuda_escalona_proporcionalmente():

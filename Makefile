@@ -24,11 +24,7 @@ venv:
 
 install:
 	pip install --upgrade pip
-	pip install boto3 fastapi uvicorn python-dotenv pydantic
-	pip install openai-whisper sounddevice numpy scipy
-	pip install opencv-python mediapipe
-	pip install mcp
-	pip install pytest pytest-asyncio
+	pip install -r requirements.txt
 
 run-capture:
 	python edge/capture/audio.py
