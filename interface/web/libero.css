@@ -1793,3 +1793,74 @@ body::before {
   backdrop-filter: blur(10px) !important;
   -webkit-backdrop-filter: blur(10px) !important;
 }
+
+/* ============================================================
+   AVATAR DO LIBERO (Modo Idoso / TV)
+   ============================================================ */
+
+.libero-avatar-container {
+  position: fixed;
+  bottom: 30px;
+  right: 30px;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.libero-avatar {
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 30%, #9b7dd1, #7c5cbf, #4a2d82);
+  box-shadow: 0 0 30px rgba(124, 92, 191, 0.6), inset 0 0 20px rgba(255,255,255,0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  animation: breathe 4s infinite ease-in-out;
+}
+
+/* O Avatar "respira" quando está só ouvindo */
+@keyframes breathe {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 30px rgba(124, 92, 191, 0.6); }
+  50% { transform: scale(1.05); box-shadow: 0 0 50px rgba(124, 92, 191, 0.9); }
+}
+
+/* O Avatar pulsa em verde quando o idoso está falando */
+.libero-avatar.ouvindo {
+  background: radial-gradient(circle at 30% 30%, #5af07a, #238636);
+  box-shadow: 0 0 40px rgba(63, 185, 80, 0.8);
+  animation: pulse-green 1s infinite;
+}
+
+@keyframes pulse-green {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+/* O Avatar pulsa em azul quando o Libero está falando */
+.libero-avatar.falando {
+  background: radial-gradient(circle at 30% 30%, #58a6ff, #1f6feb);
+  box-shadow: 0 0 40px rgba(88, 166, 255, 0.8);
+  animation: pulse-blue 1s infinite;
+}
+
+@keyframes pulse-blue {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+.libero-avatar-label {
+  background: rgba(0,0,0,0.7);
+  color: white;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  backdrop-filter: blur(4px);
+}

@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from cloud.mcp_server import tools
 from cloud.mcp_server import auth
+from cloud.agents import memory as memory_agent
 
 load_dotenv()
 
@@ -483,17 +484,16 @@ async def listar_mensagens(
 
 @app.get("/chat/{idoso_id}/memorias")
 async def listar_memorias_chat(idoso_id: str, request: Request):
-    """Lista apenas memórias."""
+    """Lista as histórias persistidas pelo agente de memória."""
     token = auth.extrair_token(request)
     try:
         auth.autorizar_idoso("gravar_memoria", token, idoso_id)
     except auth.AuthError as e:
         return JSONResponse({"error": str(e)}, status_code=401)
     
-    store = get_store()
     return {
         "idoso_id": idoso_id,
-        "memorias": store.listar_memorias(idoso_id)
+        "memorias": memory_agent.listar_memorias(idoso_id, limite=100)
     }
 
 

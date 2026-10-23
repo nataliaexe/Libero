@@ -233,6 +233,7 @@ def detectar_emergencia_contextual(texto):
 # ============================================================
 
 PALAVRAS_CONFUSAO = [
+    "work", "trabalho", "going to work",
     "onde estou", "quem e voce", "cade", "preciso ir",
     "quero ir", "me leva", "nao sei onde"
 ]
