@@ -2,384 +2,148 @@
 
 > Porque ninguém deveria se perder. Nem quem cuida.
 
----
+Libero is a research prototype for home-care support focused on context, memory, and early safety awareness for people living with dementia and the caregivers around them.
 
-## O Problema
+This repository combines a local edge layer, conversational assistants, MCP-based tool orchestration, and a web dashboard used to simulate a real care-support workflow in a home environment. The goal is to explore how technology can preserve human context, reduce cognitive load, and help families respond more thoughtfully without replacing human care.
 
-Em 2024, um senhor de 62 anos com Alzheimer levou a garrafa de café e saiu para trabalhar. Como fazia há 40 anos. Ele andou. Se machucou. Caiu. Vinte e nove dias depois, a família encontrou o corpo no mato.
+## What Libero is
 
-O filho tinha saído por 20 minutos. Duas quadras.
+Libero is not a clinical device and not a monitored emergency system. It is a prototype built to explore a practical question:
 
-**Isso não é um caso isolado.**
+How can AI and home-care tools support both the person living with dementia and the person caring for them?
 
-- **55 milhões** de pessoas vivem com demência no mundo. Serão **152 milhões** em 2050.
-- **60%** vão perambular em algum momento.
-- **50%** dos que perambulam se machucam. **10%** morrem.
-- **66%** dos cuidadores têm sintomas de depressão.
-- **40%** dos cuidadores morrem antes do paciente.
+The current implementation demonstrates:
 
-**Ninguém cuida de quem cuida.**
+- conversational support via a web interface and MCP tool flow
+- memory capture for meaningful personal stories
+- local and experimental safety analysis
+- caregiver-facing dashboards and context review
 
----
+## What Libero is not
 
-## A Solução
+Libero does not currently provide:
 
-**Libero** é um protótipo de apoio ao cuidado domiciliar. Quando o processo edge está rodando, ele processa áudio e transcreve falas; a captura de câmera é opcional e exige consentimento explícito. O sistema pode responder com linguagem acolhedora, preservar histórias como memórias consultáveis pela família e sinalizar eventos experimentais.
+- certified medical monitoring
+- automatic emergency dispatch
+- guaranteed 24/7 detection
+- clinical validation or compliance certification
 
-Um lembrete acompanha uma tarefa; o Libero busca preservar o contexto humano de uma conversa para que a família possa retomá-lo depois. A experiência de hackathon é uma simulação em web app conectada ao servidor MCP do Libero, não uma integração com um dispositivo Alexa+.
-
-As respostas seguem instruções inspiradas em terapia de validação e reminiscência. Isso não comprova eficácia clínica. O projeto **não garante monitoramento 24/7**, detecção de eventos ou entrega de alertas; não substitui cuidadores, profissionais de saúde ou serviços de emergência.
-
----
-
-## O Que Está Implementado
-
-### Funcionalidades Reais
-
-| Feature | Status | Como testar |
-| :--- | :--- | :--- |
-| Áudio contínuo com transcrição | Real | `python edge/capture/listener.py` |
-| Transcrição via Groq Whisper | Real | Falar no microfone |
-| LLM (Groq / AWS Bedrock) | Real | `python cloud/agents/companion.py` |
-| Voz via AWS Polly | Real | `python edge/output/speaker.py` |
-| Detecção multimodal de queda (áudio + visão) | Real | `python cloud/agents/safety.py` |
-| Detecção de negação ("não estou sentindo dor") | Real | `pytest tests/unit/test_adversarial.py` |
-| Decisão em 4 níveis | Real | `python edge/decision/levels.py` |
-| Stream MJPEG do edge | Real, local e sujeito a consentimento | `http://localhost:8081/stream` |
-| Conversa web usando MCP JSON-RPC | Real | Dashboard → Conversas; fluxo MCP inicializa, lista e chama ferramenta |
-| Overlay via WebSocket | Demonstração manual | `POST /teste/emergencia`; eventos detectados pelo edge ainda não são enviados automaticamente ao WebSocket |
-| Autenticação com 3 roles (família, médico, admin) | Real | `ana@libero.com` / `libero123` |
-| 13 ferramentas MCP (Streamable HTTP, resposta JSON) | Real | `POST /mcp`; `GET /mcp` retorna 405 porque SSE não é oferecido |
-| Suíte de testes automatizados | Incluída no repositório; execute localmente para ver o estado atual | `pytest tests/ -v` |
-
-### Funcionalidades de Protótipo (com limitações)
-
-| Feature | Limitação |
-| :--- | :--- |
-| Chamada a SAMU/polícia | **Não executa.** Apenas registra como `proposta_nao_executada`. Execução real é roadmap. |
-| Notificação por SNS | Só funciona se `SNS_TOPIC_ARN` estiver configurado. Sem ele, modo simulado. |
-| Persistência em DynamoDB | Código existe, mas o protótipo usa JSON local. DynamoDB é roadmap. |
-| Bedrock (Claude) | Requer credenciais AWS configuradas. Fallback offline funciona sem AWS. |
-| Groq Whisper | Requer `GROQ_API_KEY`. Fallback para Whisper local é limitado. |
-
-### O Que É Roadmap
-
-- Integração com **Bee** (wearable físico)
-- **Voice fingerprint** (distinguir idoso, cuidador, visitante)
-- **Rede neural terapêutica própria** (fine-tuning clínico)
-- **Certificação LGPD/HIPAA** (o protótipo atual **não é** compliant)
-- **Integração com planos de saúde**
-- **Multi-casa** (um cuidador monitora múltiplos idosos)
-- **Deploy em produção** (AWS Lambda, CDK, TLS terminado em proxy)
-- **Integração com YouTube, Netflix, Spotify**
-- **Geração de apresentações de memórias**
-- **Validação clínica com terapeutas**
+The project is designed as a research prototype and a human-centered design exploration.
 
 ---
 
-## Arquitetura
+## The problem
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                       LIBERO                                 │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ÁUDIO (contínuo)         CÂMERA (contínuo)                  │
-│  edge/main.py             edge/main.py                       │
-│  └─ Groq Whisper          └─ OpenCV / MediaPipe              │
-│      │                       │                               │
-│      └───────────┬───────────┘                               │
-│                  ▼                                            │
-│  ┌──────────────────────────────────────┐                   │
-│  │       CÉREBRO (Cloud)                 │                   │
-│  │  cloud/agents/orchestrator.py         │                   │
-│  │  ├─ companion (validação)             │                   │
-│  │  ├─ safety (queda, fuga, grito)       │                   │
-│  │  ├─ memory (reminiscência)            │                   │
-│  │  ├─ care (remédios, água)             │                   │
-│  │  ├─ family (notificação)              │                   │
-│  │  ├─ health (correlação)               │                   │
-│  │  └─ governance (auditoria)            │                   │
-│  └──────────────────┬───────────────────┘                   │
-│                     │                                        │
-│      ┌──────────────┼──────────────┐                        │
-│      ▼              ▼              ▼                        │
-│  ┌────────┐    ┌────────┐    ┌────────┐                    │
-│  │ MCP    │    │WebSocket│   │Polly   │                    │
-│  │Server  │    │(real-time)│  │(voz)   │                    │
-│  └────────┘    └────────┘    └────────┘                    │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
-```
+When somebody living with dementia says, "I need to go home," a reminder alone cannot address the feeling behind the sentence. Families may lose context, routines can become disorienting, and the risk of wandering or confusion can rise quickly.
 
-### Componentes Principais
+At the same time, caregivers are often managing the emotional load of care while trying to maintain their own lives and responsibilities.
 
-| Camada | Arquivo | Função |
-| :--- | :--- | :--- |
-| **Edge** | `edge/main.py` | Orquestra áudio, câmera, voz |
-| **Listener** | `edge/capture/listener.py` | Áudio contínuo com VAD + Groq Whisper |
-| **Câmera** | `edge/capture/stream.py` | OpenCV + detecção de queda |
-| **Câmera HTTP** | `edge/camera_server.py` | Serve MJPEG em :8081 |
-| **Voz** | `edge/output/speaker.py` | AWS Polly / espeak |
-| **Decisão** | `edge/decision/levels.py` | 4 níveis com detecção de negação |
-| **Orquestrador** | `cloud/agents/orchestrator.py` | Coordena 8 agentes |
-| **Segurança** | `cloud/agents/safety.py` | Queda, fuga, grito |
-| **Companhia** | `cloud/agents/companion.py` | Terapia de validação |
-| **Memória** | `cloud/agents/memory.py` | Grava histórias |
-| **Saúde** | `cloud/agents/health.py` | Correlaciona sintomas |
-| **Governança** | `cloud/agents/governance.py` | Auditoria + viés |
-| **MCP Server** | `cloud/mcp_server/server.py` | 13 ferramentas HTTP |
-| **Dashboard** | `interface/web/libero.js` | Frontend HTML/CSS/JS puro |
+**Libero explores how technical support can reduce this pressure without replacing presence, trust, or judgment.**
 
 ---
 
-## Requisitos
+## Short pitch
 
-- **Python 3.11+** (testado em 3.11 e 3.14)
-- **Linux, macOS ou Windows**
-- **Microfone** (obrigatório)
-- **Câmera** (opcional, mas recomendada)
-- **Conta Groq** (free tier suficiente)
-- **Conta AWS** (opcional, para Bedrock + Polly)
+When someone living with dementia says, "I need to go home," a reminder cannot address the feeling behind that moment. Libero connects a supportive response to the context of the person and the family around them, helping preserve meaningful memories while surfacing situations that may deserve attention.
 
----
+It is a research prototype for home-care support built to explore how AI can reduce caregiver burden, support safer routines, and keep human context close when memory fades.
 
-## Instalação
-
-```bash
-# 1. Clonar
-git clone https://github.com/nataliaexe/Libero.git
-cd Libero
-
-# 2. Virtualenv
-python3 -m venv venv
-source venv/bin/activate  # Linux/macOS
-
-# 3. Dependências Python
-pip install -r requirements.txt
-
-# 4. Dependências de sistema (Linux)
-sudo apt install -y ffmpeg portaudio19-dev espeak-ng v4l-utils
-```
-
-### Configurar `.env`
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-**Mínimo** (modo development):
-```bash
-LIBERO_ENV=development
-GROQ_API_KEY=gsk_sua_chave_aqui
-GROQ_LLM_MODEL=openai/gpt-oss-120b
-AWS_REGION=us-east-2
-# Para Bedrock, configure também BEDROCK_MODEL_ID e credenciais AWS via perfil/CLI.
-```
-
-**Completo** (com AWS):
-```bash
-LIBERO_ENV=development
-GROQ_API_KEY=gsk_...
-GROQ_LLM_MODEL=openai/gpt-oss-120b
-AWS_REGION=us-east-2
-BEDROCK_MODEL_ID=arn:aws:bedrock:us-east-2:...:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0
-POLLY_VOICE=Camila
-```
+Because no one should get lost. Not even the caregiver.
 
 ---
 
-## Como Rodar
+## Demonstration and status
 
-### Atalho de demo local
+The project already demonstrates a functioning local demo stack with:
 
-Com `scripts/setup.sh` já executado, rode `./scripts/run-all.sh` para iniciar o servidor MCP, o processo edge integrado e a interface web em sessões `tmux`. Abra o dashboard em `http://localhost:3000/dashboard.html`. O script não habilita a câmera; ela continua condicionada a consentimento explícito. Se o host não tiver microfone disponível, o dashboard informa o estado e a conversa digitada continua disponível.
+- a dashboard web app
+- an MCP-connected conversation flow
+- memory capture and review
+- edge status checks for microphone and camera assumptions
+- experimental safety-event logic designed for research use
 
-### 3 Terminais
+For production-grade deployment, the next steps are network hardening, consent workflows, security review, better persistence, and clinical/UX validation.
 
-**Terminal 1 — MCP Server**:
+---
+
+## How to run the demo
+
+### Prerequisites
+
+- Python 3.11+
+- Node.js 18+
+- Microphone (required) and camera (optional, consent-based)
+- Groq API key (free tier works)
+- AWS account (optional, for Bedrock + Polly)
+
+### 1. Backend (MCP Server)
+
 ```bash
 cd ~/libero
+python3 -m venv venv
 source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env and add GROQ_API_KEY
 python cloud/mcp_server/server.py
 ```
 
-**Terminal 2 — Edge (áudio + câmera + voz)**:
+### 2. Edge (audio + camera)
+
 ```bash
 cd ~/libero
 source venv/bin/activate
-python edge/main.py  # áudio; câmera inicia somente se consentimento=true no .env
+LIBERO_CAMERA_CONSENT=true python edge/main.py
 ```
 
-**Terminal 3 — Dashboard**:
-```bash
-cd ~/libero
-source venv/bin/activate
-python -m http.server 3000 --directory interface/web
-```
-
-### Acessar
-
-- **Dashboard**: http://localhost:3000/dashboard.html
-- **Status real do edge**: http://localhost:8081/status
-- **Câmera (edge, com consentimento)**: http://localhost:8081/stream
-- **MCP Streamable HTTP**: http://localhost:8080/mcp
-
-### Contas de Teste (modo development)
-
-| Email | Senha | Role |
-| :--- | :--- | :--- |
-| ana@libero.com | libero123 | família |
-| medico@libero.com | medico123 | médico |
-| admin@libero.com | admin123 | admin |
-
-**Importante**: estas contas **só existem em modo development**. Em produção (`LIBERO_ENV=production`), o servidor exige `LIBERO_USERS_JSON` com senhas fortes.
-
----
-
-## Testes
+### 3. Frontend (React + Vite)
 
 ```bash
-pytest tests/ -v
+cd ~/libero/interface
+npm install
+npm run dev
 ```
 
-**Validação automatizada: 112 testes passaram.** A execução foi feita sem chamar provedores externos (Groq/Bedrock), então ela valida o modo offline e os fluxos simulados. Microfone, saída de áudio, câmera física e credenciais AWS/Groq precisam ser conferidos no equipamento usado para a demo. Após os ajustes mais recentes no início da câmera, 8 testes direcionados também passaram. A cobertura inclui:
+Open `http://localhost:3000` and log in with:
 
-- Detecção multimodal de queda
-- Detecção de negação ("não estou sentindo dor" ≠ emergência)
-- Intenção ≠ comportamento (fuga)
-- Escalonamento proporcional (SAMU só com confiança ≥ 0.9)
-- Correlação de sintomas (infecção urinária)
-- Auditoria e detecção de viés
-- 13 ferramentas MCP
-- Autenticação e isolamento entre idosos
-- Endpoint WebSocket com escopo por idoso; o broadcast do edge não está conectado automaticamente
-- Câmera do edge e placeholder MCP
-- Merge de blocos de voz
-- Listener com filtros anti-falso-positivo
+- **Email**: `ana@libero.com`
+- **Password**: `libero123`
+
+### 4. Trigger a test emergency (optional)
+
+```bash
+curl -X POST http://localhost:8080/teste/emergencia \
+  -H "Content-Type: application/json" \
+  -d '{"idoso_id":"dona-maria","evento":"queda","local":"quarto"}'
+```
 
 ---
 
-## Segurança e Privacidade — O Que É Real
+## Tech stack
 
-### O Que Está Implementado
-
-| Aspecto | Status |
+| Layer | Technology |
 | :--- | :--- |
-| Senhas com scrypt | Real |
-| Sessões em cookie HttpOnly + Secure | Real |
-| Rate limit de login | Real |
-| CORS restrito em produção | Real |
-| Isolamento por idoso (authz) | Real |
-| Ticket one-time para câmera | Real |
-| Ações externas marcadas como `proposta_nao_executada` | Real |
-
-### O Que NÃO Está Implementado
-
-| Aspecto | Status |
-| :--- | :--- |
-| Criptografia end-to-end | Roadmap |
-| Certificação LGPD | Roadmap |
-| Certificação HIPAA | Roadmap |
-| Criptografia em repouso (dados locais) | Roadmap |
-| Auditoria persistente (não em memória) | Roadmap |
-| Rotação de chaves | Roadmap |
-
-**Nota**: este projeto **não é** um sistema de emergência médica certificado. É um **protótipo de pesquisa** que visa conformidade futura.
+| **Edge** | Python, OpenCV, Groq Whisper |
+| **Cloud** | FastAPI, AWS Bedrock (Claude), AWS Polly |
+| **MCP Server** | Streamable HTTP (spec 2025-11-25) |
+| **Frontend** | React, Vite, Framer Motion, @google/model-viewer |
+| **Auth** | Cookie HttpOnly, 3 roles (family, doctor, admin) |
+| **Tests** | Pytest (106 tests) |
 
 ---
 
-## Limitações Conhecidas
+## Documentation
 
-### Do Protótipo Atual
-
-- **Detecção de emergência é heurística**. Os thresholds são calibrados manualmente. Não há validação clínica.
-- **Chamadas a SAMU/polícia não são executadas**. Apenas registradas.
-- **Persistência em memória ou JSON local**. Multi-instância não é suportado.
-- **Câmera requer consentimento explícito** (`LIBERO_CAMERA_CONSENT=true`).
-- **O processo edge é o único dono da câmera física**; a API MCP não abre `/dev/videoN` e serve apenas um placeholder.
-- O status de sensores só é confiável quando o edge está conectado e reportando em `http://localhost:8081/status`.
-- Eventos capturados pelo edge são registrados no armazenamento local. O overlay WebSocket é acionado pela rota de demonstração; o envio automático de eventos do edge e notificações remotas ainda não estão implementados.
-- **Microfone** depende do ambiente (ruído, latência do PipeWire no Linux).
-- **Groq Whisper** tem latência (~1-2s). Não é transcrição local.
-- **Bedrock** requer credenciais AWS. Sem elas, fallback offline é usado.
-
-### Do Escopo
-
-- **Não substitui médico**. É apoio domiciliar.
-- **Não substitui cuidador humano**. É complemento.
-- **Não é dispositivo médico**. Não há validação pela ANVISA.
+- [docs/PITCH_LIBERO.md](docs/PITCH_LIBERO.md) — pitch material and positioning
+- [docs/ROTEIRO_DEMO_VIDEO.md](docs/ROTEIRO_DEMO_VIDEO.md) — demo script and checklist
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — architecture overview
+- [docs/GOVERNANCE.md](docs/GOVERNANCE.md) — safety and governance notes
+- [docs/PRIVACY.md](docs/PRIVACY.md) — privacy and deployment considerations
 
 ---
 
-## Hackathon e materiais de apresentação
+## License
 
-- Trilha principal pretendida: **Alexa+**, com o servidor MCP em `POST /mcp` e a conversa do dashboard chamando `initialize`, `notifications/initialized`, `tools/list` e `tools/call`.
-- O servidor anuncia MCP `2025-11-25`, usa respostas JSON no transporte Streamable HTTP e responde `405` ao GET porque não oferece stream SSE. A interoperabilidade ainda deve ser conferida com um cliente MCP antes de afirmar conformidade completa.
-- Para demonstrar Bedrock no desafio **AWS Builder**, configure `BEDROCK_MODEL_ID`, credenciais via AWS CLI/profile e `LIBERO_LLM_PROVIDER=bedrock`. A conversa mostra qual provedor realmente respondeu; só selecione o mini desafio se a gravação mostrar “Amazon Bedrock”.
-- O vídeo de submissão precisa ser público, em inglês e ter menos de 3 minutos. Inclua também o feedback escrito dos produtos/SDKs realmente usados e uma lista das mudanças feitas durante o hackathon.
-- Libero não está sendo submetido às trilhas Fire TV, Bee ou Ring como integração concluída.
+MIT. See [LICENSE](LICENSE).
 
-Materiais para preparar a apresentação:
-
-- [Pitch em português e inglês, diferenciação e posicionamento](docs/PITCH_LIBERO.md)
-- [Roteiro do vídeo demo, plano de contingência e checklist](docs/ROTEIRO_DEMO_VIDEO.md)
-
-## Documentação técnica
-
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — Arquitetura detalhada
-- [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md) — Governança e auditoria
-- [`docs/PRIVACY.md`](docs/PRIVACY.md) — Privacidade e dados
-- [`docs/FRICTION_LOG.md`](docs/FRICTION_LOG.md) — Registro de problemas e soluções
-- [`docs/SECURITY_DEPLOYMENT.md`](docs/SECURITY_DEPLOYMENT.md) — Configuração para produção
-
----
-
-## Roadmap Técnico
-
-### Curto Prazo (1-3 meses)
-
-- CI/CD (GitHub Actions) com pytest + lint
-- Adapter pattern para persistência (JSON em dev, DynamoDB em prod)
-- Logging estruturado (substituir prints)
-- Validação de env vars com Pydantic BaseSettings
-- ThreadPoolExecutor no edge (limitar concorrência)
-- Secrets Manager para credenciais em produção
-
-### Médio Prazo (3-12 meses)
-
-- Integração com Bee (wearable físico)
-- Voice fingerprint
-- Rede neural terapêutica própria (fine-tuning clínico)
-- Certificação LGPD/HIPAA
-- Estudos clínicos com universidades
-
-### Longo Prazo (1-2 anos)
-
-- Deploy em produção (AWS Lambda, CDK)
-- Integração com planos de saúde
-- Multi-casa
-- Plataforma para desenvolvedores (SDK)
-
----
-
-## Autoria
-
-**Natália Borges Vargas**
-Projeto submetido ao **Build, Ship, Shape: Amazon Developer Hackathon**.
-
----
-
-## Licença
-
-MIT. Veja [LICENSE](LICENSE).
-
----
-
-## Frase Final
-
-> *"O Libero não impede a doença. Ele impede que a doença vença."*
-
-**LIBERO**
-*Porque ninguém deveria se perder. Nem quem cuida.*
+Build by Natalia.exe

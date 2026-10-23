@@ -36,23 +36,22 @@ def test_transcricao_groq_detecta_idioma_sem_forcar_ingles(monkeypatch):
     assert listener.ultimo_idioma == "en"
 
 
-def test_transcricao_groq_descarta_idioma_nao_suportado(monkeypatch):
+def test_transcricao_groq_usa_idioma_padrao_quando_deteccao_nao_e_suportada(monkeypatch):
     class FakeTranscriptions:
         def create(self, **kwargs):
-            return SimpleNamespace(
-                text="Hãy subscribe cho kênh Ghiền Mì Gõ Để không bỏ lỡ những video hấp dẫn",
-                language="vietnamese",
-            )
+            return SimpleNamespace(text="Olá.", language="spanish")
 
     fake_groq = SimpleNamespace(audio=SimpleNamespace(transcriptions=FakeTranscriptions()))
     monkeypatch.setattr("edge.capture.listener._groq", fake_groq)
     monkeypatch.setattr("edge.capture.listener.WHISPER_DISPONIVEL", False)
+    monkeypatch.setattr("edge.capture.listener.DEFAULT_LANGUAGE", "pt-BR")
     listener = Listener()
 
     texto = listener._transcrever(np.full(1600, 0.1, dtype=np.float32))
 
-    assert texto == ""
-    assert "Idioma de transcrição não suportado" in listener.ultimo_erro_transcricao
+    assert texto == "Olá."
+    assert listener.ultimo_idioma == "pt-BR"
+    assert listener.ultimo_erro_transcricao is None
 
 
 def test_transcricao_longa_demais_para_audio_curto_e_improvavel():

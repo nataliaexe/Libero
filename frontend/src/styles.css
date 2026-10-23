@@ -170,7 +170,23 @@ label { display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 
   font-style: italic;
 }
 
-.camera { width: 100%; border-radius: 14px; background: #30283d; min-height: 300px; }
+.camera-flutuante {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 90;
+  width: min(320px, calc(100vw - 32px));
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 12px 36px rgba(38, 27, 52, 0.22);
+}
+.camera-flutuante-topo { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.camera-flutuante-topo strong { font-size: 0.86rem; }
+.camera-flutuante-topo button { padding: 5px 8px; font-size: 0.75rem; }
+.camera-flutuante img { display: block; width: 100%; aspect-ratio: 4 / 3; border-radius: 10px; object-fit: cover; background: #30283d; }
+.camera-flutuante .erro { margin: 8px 4px; }
 .linha { display: flex; gap: 8px; margin-top: 12px; }
 
 /* Libero companion */

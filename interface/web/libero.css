@@ -509,6 +509,48 @@ button.quiet:hover {
   color: #e94560;
 }
 
+.camera-floating {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 900;
+  width: min(360px, calc(100vw - 32px));
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(16px);
+}
+
+.camera-floating-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+  color: var(--text);
+  font-size: 13px;
+}
+
+.camera-floating-heading button {
+  padding: 6px 10px;
+}
+
+.camera-floating img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 10px;
+  background: #1a1a2e;
+  object-fit: cover;
+}
+
+.camera-floating .camera-message {
+  padding: 14px;
+  color: var(--text);
+}
+
 /* ============================================================
    NOTICE
    ============================================================ */

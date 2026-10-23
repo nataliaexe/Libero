@@ -488,11 +488,11 @@ class Listener:
                     idioma_detectado = getattr(t, "language", None)
                     idioma = _normalizar_idioma(idioma_detectado, fallback=None)
                     if idioma_detectado and idioma is None:
-                        self.ultimo_erro_transcricao = (
-                            f"Idioma de transcrição não suportado: {idioma_detectado}"
+                        idioma = _normalizar_idioma(None)
+                        print(
+                            f"[Libero Listener] Idioma detectado não suportado "
+                            f"({idioma_detectado}); usando o idioma padrão {idioma}."
                         )
-                        print(f"[Libero Listener] {self.ultimo_erro_transcricao}")
-                        return ""
                     self.ultimo_idioma = idioma or _normalizar_idioma(None)
                     if texto:
                         self.metodo_transcricao = "groq"
@@ -510,11 +510,11 @@ class Listener:
                 idioma_detectado = r.get("language")
                 idioma = _normalizar_idioma(idioma_detectado, fallback=None)
                 if idioma_detectado and idioma is None:
-                    self.ultimo_erro_transcricao = (
-                        f"Idioma de transcrição não suportado: {idioma_detectado}"
+                    idioma = _normalizar_idioma(None)
+                    print(
+                        f"[Libero Listener] Idioma detectado não suportado "
+                        f"({idioma_detectado}); usando o idioma padrão {idioma}."
                     )
-                    print(f"[Libero Listener] {self.ultimo_erro_transcricao}")
-                    return ""
                 self.ultimo_idioma = idioma or _normalizar_idioma(None)
                 self.metodo_transcricao = "whisper_local"
                 return r["text"].strip()

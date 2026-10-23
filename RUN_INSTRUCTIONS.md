@@ -1,138 +1,60 @@
-# Como Rodar o Projeto Libero
+# How to run the Libero Demo
 
-Este projeto precisa de 2-3 terminais para funcionar completamente.
+This project is a **research prototype** for home-care support. It runs locally on Linux/macOS/Windows.
 
-## Terminal 1: Backend MCP Server
+## Prerequisites
+- Python 3.11+
+- Node.js 18+
+- (Optional) AWS credentials for Bedrock/Polly
 
+## Step 1: Backend (MCP Server)
+Open Terminal 1 and run:
 ```bash
 cd ~/libero
+python3 -m venv venv
 source venv/bin/activate
-pkill -f "cloud/mcp_server/server.py"
-sleep 1
+pip install -r requirements.txt
+cp .env.example .env
+# Edit .env with your GROQ_API_KEY
 python cloud/mcp_server/server.py
 ```
+The API will be available at `http://127.0.0.1:8080`.
 
-**O que faz:** Servidor de API que gerencia autenticação, chat, tarefas, dispositivos e WebSocket.
-**Porta:** 8080
-**URL:** http://127.0.0.1:8080
-
----
-
-## Terminal 2: Frontend React
-
-```bash
-cd ~/libero/frontend
-npm install  # (apenas na primeira vez)
-npm run dev
-```
-
-**O que faz:** Interface React com avatar, chat, emparelhamento de dispositivos.
-**Porta:** 3000
-**URL:** http://localhost:3000/react-app.html
-
-**Nota:** Este comando:
-1. Compila o avatar 3D
-2. Compila o app React
-3. Inicia servidor HTTP estático
-
----
-
-## Terminal 3 (Opcional): Edge Service
-
+## Step 2: Edge Device (Audio + Camera)
+Open Terminal 2 and run:
 ```bash
 cd ~/libero
 source venv/bin/activate
-pkill -f "edge/main.py"
-sleep 1
-python edge/main.py
+LIBERO_CAMERA_CONSENT=true python edge/main.py
 ```
+This starts the microphone listener and the camera stream at `http://127.0.0.1:8081/stream`.
 
-**O que faz:** Captura de áudio e câmera em tempo real (microfone, detecção de quedas, movimentos).
-**Porta:** 8081
-**URL:** http://127.0.0.1:8081
+## Step 3: React Frontend
+Open Terminal 3 and run:
+```bash
+cd ~/libero/frontend
+npm install
+npm run dev
+```
+Open `http://localhost:3000` in your browser.
 
-**Nota:** Necessário apenas se quiser usar captura de áudio/câmera.
+## Step 4: Login
+Use the development credentials:
+- **Email**: `ana@libero.com`
+- **Password**: `libero123`
 
----
-
-## Acessando a Aplicação
-
-### Nova Interface React (Recomendada)
-- URL: http://localhost:3000/react-app.html
-- Features:
-  - Avatar 3D animado
-  - Chat com polling a cada 5 segundos
-  - Modo TV (avatar em tela cheia)
-  - Emparelhamento de dispositivos (TV, tablets)
-  - Login com autenticação
-
-### Interface Legada (Ainda disponível)
-- URL: http://localhost:3000/dashboard.html
-- Features:
-  - Dashboard antigo
-  - WebSocket (agora corrigido)
-  - Páginas: alertas, chat, memórias, ambiente, tarefas
-
----
-
-## Login Padrão (Development)
-
-Email: `admin@libero.dev`
-Senha: `admin123`
-
-Ou use a variável de ambiente `LIBERO_TOKEN` para bypass de desenvolvimento.
-
----
+## Step 5: Test the flow
+1. Go to **Conversations** and type `I need to go home`.
+2. Go to **Environment** and click **Open visualization** (requires Edge running).
+3. Go to **Care Screen** to see the avatar.
+4. Trigger an emergency overlay:
+```bash
+curl -X POST http://localhost:8080/teste/emergencia \
+  -H "Content-Type: application/json" \
+  -d '{"idoso_id":"dona-maria","evento":"queda","local":"quarto"}'
+```
 
 ## Troubleshooting
-
-### WebSocket 403 Error
-**Corrigido:** Em modo development, o WebSocket aceita conexões SEM autenticação para facilitar debug. Não requer token.
-
-### Avatar não aparece
-1. Verifique se o arquivo `woman.glb` existe em `frontend/public/`
-2. Verifique se foi copiado para `interface/web/assets/libero-avatar/`
-3. Execute `npm run build:avatar` novamente
-
-### Erro de import no React
-1. Execute `npm install` no diretório `frontend/`
-2. Verifique se `node_modules` existe
-
-### Porta já em uso
-```bash
-# Para matar processo na porta 8080
-lsof -ti:8080 | xargs kill -9
-
-# Para matar processo na porta 3000
-lsof -ti:3000 | xargs kill -9
-```
-
----
-
-## Estrutura de Arquivos Modificados
-
-### Backend
-- `cloud/mcp_server/server.py` - Adicionados endpoints de dispositivos, corrigido WebSocket
-- `cloud/mcp_server/auth.py` - Adicionada função `extrair_token_websocket()`
-
-### Frontend
-- `frontend/src/components/ModoTV.jsx` - Modo TV com emparelhamento
-- `frontend/src/components/DevicePairing.jsx` - Modal de pareamento de dispositivos
-- `frontend/src/components/Chat.jsx` - Chat com polling (já existia, verificado)
-- `frontend/src/components/LiberoAvatar.jsx` - Caminho do avatar corrigido
-- `frontend/src/styles.css` - Estilos para TV, pareamento, chat
-- `frontend/vite.app.config.js` - Config de build para app React
-- `frontend/package.json` - Scripts atualizados
-- `interface/web/react-app.html` - HTML para app React
-
----
-
-## Funcionalidades Implementadas
-
-✅ WebSocket autenticação corrigida
-✅ Avatar 3D configurado e acessível
-✅ Modo TV (avatar em tela cheia sem bloquear funcionalidades)
-✅ Emparelhamento de dispositivos (TV, tablets)
-✅ Chat com polling a cada 5 segundos
-✅ Envio de mensagens com onSubmit
-✅ Sincronização de estado do avatar
+- **Camera not opening**: Ensure no other app is using `/dev/video0`.
+- **Microphone not working**: Ensure the Edge is running and the terminal is not muted.
+- **Login fails**: Ensure the MCP Server (Terminal 1) is running.
