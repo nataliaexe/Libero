@@ -1864,3 +1864,249 @@ body::before {
   font-weight: 600;
   backdrop-filter: blur(4px);
 }
+
+/* Avatar 3D integrado ao widget flutuante da interface existente. */
+.libero-avatar-container {
+  width: 142px;
+  right: 26px;
+  bottom: 22px;
+  gap: 4px;
+}
+.avatar-3d {
+  position: relative;
+  isolation: isolate;
+  width: 142px;
+  height: 150px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.avatar-3d-brilho {
+  position: absolute;
+  z-index: -1;
+  top: 18px;
+  width: 108px;
+  height: 108px;
+  border-radius: 50%;
+  filter: blur(23px);
+  pointer-events: none;
+}
+.avatar-3d-modelo {
+  width: 130px;
+  height: 126px;
+}
+.avatar-3d-rotulo {
+  margin: 1px 0 0;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-shadow: 0 1px 8px rgba(30, 22, 43, 0.7);
+  text-transform: uppercase;
+}
+.avatar-load-error {
+  padding: 18px;
+  color: #fff;
+  border: 1px solid rgba(255,255,255,.25);
+  border-radius: 50%;
+  font-size: 11px;
+}
+.avatar-loading {
+  display: grid;
+  width: 88px;
+  height: 88px;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.25);
+  border-radius: 50%;
+  color: rgba(255,255,255,.85);
+  background: radial-gradient(circle, rgba(155,125,209,.46), rgba(74,45,130,.24));
+  box-shadow: 0 0 32px rgba(124,92,191,.48);
+  font-size: 11px;
+  animation: breathe 2.4s infinite ease-in-out;
+}
+.react-chat-composer {
+  display: flex;
+  gap: 12px;
+  margin-top: 18px;
+}
+.react-chat-composer .field { flex: 1; min-width: 0; }
+.chat-error {
+  color: var(--danger);
+  margin-bottom: 12px;
+}
+.react-chat .chat-container { min-height: 180px; }
+
+/* Chat simples (sem React) */
+.chat-messages {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 12px;
+  background: var(--bg-warm);
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+}
+
+.chat-day-divider {
+  text-align: center;
+  padding: 16px 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  position: relative;
+}
+
+.chat-day-divider::before,
+.chat-day-divider::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 30%;
+  height: 1px;
+  background: var(--border);
+}
+
+.chat-day-divider::before { left: 0; }
+.chat-day-divider::after { right: 0; }
+
+.chat-composer {
+  display: flex;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.chat-composer .field {
+  flex: 1;
+  margin-top: 0;
+}
+
+.chat-bubble.idoso .chat-avatar {
+  background: linear-gradient(135deg, #e94560, #f57c8e);
+}
+
+.chat-bubble.idoso {
+  flex-direction: row-reverse;
+}
+
+.chat-bubble.idoso .chat-content {
+  align-items: flex-end;
+}
+
+.chat-bubble.libero .chat-avatar {
+  background: linear-gradient(135deg, #7c5cbf, #9b7dd1);
+}
+
+.chat-bubble.cuidador .chat-avatar {
+  background: linear-gradient(135deg, #3fb950, #5af07a);
+}
+
+.chat-bubble.cuidador {
+  flex-direction: row-reverse;
+}
+
+.chat-bubble.cuidador .chat-content {
+  align-items: flex-end;
+}
+.care-screen {
+  position: fixed;
+  z-index: 2000;
+  inset: 0;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  overflow: hidden;
+  padding: clamp(18px, 4vw, 48px);
+  color: var(--text);
+  background: linear-gradient(135deg, var(--bg-warm), var(--bg));
+}
+.care-screen-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-soft);
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.care-screen-brand { color: var(--text); font-weight: 800; text-decoration: none; }
+.care-screen-center { display: grid; place-items: center; min-height: 0; }
+.care-screen-center .avatar-3d { width: min(82vw, 720px); height: min(78vh, 760px); }
+.care-screen-center .avatar-3d-brilho { top: 12%; width: min(68vw, 520px); height: min(68vw, 520px); filter: blur(70px); }
+.care-screen-center .avatar-3d-modelo { width: min(76vw, 650px); height: min(72vh, 660px); }
+.care-screen-center .avatar-3d-rotulo { font-size: clamp(14px, 2vw, 22px); }
+.care-screen-controls {
+  justify-self: center;
+  width: min(100%, 760px);
+  padding: 14px 18px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  transition: opacity .25s ease;
+}
+.care-screen-controls p { margin: 0 0 8px; font-size: 13px; }
+.care-screen-link { overflow-wrap: anywhere; font-size: 12px; opacity: .8; }
+.care-screen-buttons { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.care-screen-buttons .quiet { background: var(--bg-warm); color: var(--text); border-color: var(--border); }
+.care-screen-controls [role="status"] { display: inline-block; margin-top: 8px; font-size: 12px; }
+.care-screen.fullscreen-active .care-screen-controls { opacity: .28; }
+.care-screen.fullscreen-active .care-screen-controls:hover,
+.care-screen.fullscreen-active .care-screen-controls:focus-within { opacity: 1; }
+
+/* Avatar 3D no care screen */
+.care-screen-center .avatar-wrap.grande {
+  width: min(60vh, 60vw);
+  height: min(60vh, 60vw);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.care-screen-center .avatar-wrap.grande model-viewer {
+  width: 100%;
+  height: 100%;
+}
+.care-screen-center .avatar-wrap.grande .avatar-rotulo {
+  font-size: 1.8rem;
+  color: var(--text-soft);
+  margin-top: 20px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* Care screen melhorado */
+.care-screen-info {
+  text-align: center;
+  margin-bottom: 16px;
+}
+
+.care-screen-info strong {
+  display: block;
+  font-size: 1.2rem;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.care-screen-info p {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.care-screen-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  .libero-avatar-container { right: 12px; bottom: 12px; transform: scale(0.82); transform-origin: bottom right; }
+  .react-chat-composer { align-items: stretch; }
+  .care-screen { padding: 18px; }
+  .care-screen-controls { padding: 12px; }
+}

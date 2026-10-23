@@ -333,3 +333,18 @@ def extrair_token(request):
     if token:
         return token
     return request.cookies.get("libero_session")
+
+
+def extrair_token_websocket(websocket):
+    """Extrai token de conexão WebSocket (header ou query param)."""
+    auth_header = websocket.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        return auth_header[7:]
+    token = websocket.headers.get("X-Libero-Token")
+    if token:
+        return token
+    # Tenta pegar dos query params
+    token = websocket.query_params.get("token")
+    if token:
+        return token
+    return websocket.cookies.get("libero_session")
