@@ -6,7 +6,7 @@ const localApi = frontendDevPort
   ? `${window.location.protocol}//${hostname}:8080`
   : window.location.origin;
 
-export const API_URL = import.meta.env.VITE_API_URL || localApi;
+export const API_URL = window.LIBERO_API_URL || import.meta.env.VITE_API_URL || localApi;
 export const IDOSO_PADRAO = import.meta.env.VITE_IDOSO_ID || 'dona-maria';
 
 export async function req(path, options = {}) {

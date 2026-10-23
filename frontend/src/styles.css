@@ -76,17 +76,20 @@ label { display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 
   max-height: 500px;
   overflow-y: auto;
   padding: 12px;
-  background: #faf8fc;
+  background: rgba(250, 248, 252, 0.78);
+  border: 1px solid rgba(232, 223, 233, 0.8);
+  overscroll-behavior: contain;
   border-radius: 12px;
   margin: 12px 0;
 }
 .chat-bubble {
   display: flex;
+  justify-content: flex-end;
   gap: 10px;
   margin-bottom: 12px;
   align-items: flex-start;
 }
-.chat-bubble.eh-idoso { flex-direction: row-reverse; }
+.chat-bubble.eh-libero { justify-content: flex-start; }
 .chat-avatar {
   width: 36px; height: 36px;
   border-radius: 50%;
@@ -109,6 +112,16 @@ label { display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 
 .chat-bubble.eh-libero .chat-content {
   background: #e8f4ec;
 }
+.chat-bubble.eh-sistema .chat-content {
+  background: #f9e8ef;
+}
+.chat-day-divider {
+  padding: 10px 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 650;
+  text-align: center;
+}
 .chat-name {
   font-size: 0.75rem;
   color: var(--muted);
@@ -129,12 +142,26 @@ label { display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 
   margin-top: 0;
 }
 .chat-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--danger);
   font-size: 0.9rem;
   padding: 8px 12px;
   background: #fff0f3;
   border-radius: 8px;
   margin: 8px 0;
+}
+.chat-error button {
+  flex: 0 0 auto;
+  padding: 6px 10px;
+}
+.chat-load-older {
+  display: block;
+  margin: 0 auto 16px;
+  color: var(--lilac-strong);
+  background: rgba(255, 255, 255, 0.8);
 }
 .empty-state {
   color: var(--muted);
@@ -146,42 +173,104 @@ label { display: block; color: var(--muted); font-size: 0.85rem; margin-bottom: 
 .camera { width: 100%; border-radius: 14px; background: #30283d; min-height: 300px; }
 .linha { display: flex; gap: 8px; margin-top: 12px; }
 
-/* Avatar */
-.avatar-3d {
+/* Libero companion */
+.libero-companion {
   position: relative;
-  isolation: isolate;
   width: 220px;
-  min-height: 230px;
+  min-height: 270px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
 }
-.avatar-3d-brilho {
+.libero-companion-personagem {
+  position: relative;
+  width: 100%;
+  max-width: 250px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  isolation: isolate;
+}
+.libero-companion-personagem img {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 100%;
+  height: auto;
+  filter: drop-shadow(0 16px 18px rgba(72, 47, 83, 0.14));
+  animation: libero-breathe 4.5s ease-in-out infinite;
+  transform-origin: 50% 88%;
+}
+.libero-companion-personagem:hover img,
+.libero-companion-personagem:focus-visible img {
+  filter: drop-shadow(0 18px 24px rgba(72, 47, 83, 0.24));
+}
+.libero-companion-aura {
   position: absolute;
-  z-index: -1;
-  top: 18px;
-  width: 180px;
-  height: 180px;
+  z-index: 0;
+  inset: 12% 5% 8%;
   border-radius: 50%;
-  filter: blur(35px);
-  pointer-events: none;
+  background: radial-gradient(ellipse, rgba(221, 198, 236, 0.44), rgba(255, 255, 255, 0) 70%);
+  transition: transform 0.4s ease, opacity 0.4s ease;
 }
-.avatar-3d-modelo { width: 190px; height: 190px; }
-.avatar-3d-rotulo {
+.libero-companion-ondas {
+  position: absolute;
+  z-index: 2;
+  left: 50%;
+  bottom: 8%;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
+  opacity: 0;
+  transform: translateX(-50%);
+  transition: opacity 0.2s ease;
+}
+.libero-companion-ondas i {
+  width: 4px;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--lilac-strong);
+}
+.libero-companion-personagem[data-state="ouvindo"] .libero-companion-ondas,
+.libero-companion-personagem[data-state="falando"] .libero-companion-ondas {
+  opacity: 1;
+}
+.libero-companion-personagem[data-state="ouvindo"] .libero-companion-ondas i {
+  animation: libero-wave 0.9s ease-in-out infinite alternate;
+}
+.libero-companion-personagem[data-state="falando"] .libero-companion-ondas i {
+  animation: libero-wave 0.45s ease-in-out infinite alternate;
+}
+.libero-companion-ondas i:nth-child(2) { animation-delay: 0.15s !important; }
+.libero-companion-ondas i:nth-child(3) { animation-delay: 0.3s !important; }
+.libero-companion-personagem[data-state="pensando"] .libero-companion-aura {
+  transform: scale(1.08);
+  opacity: 0.7;
+}
+.libero-companion.grande {
+  width: min(72vw, 430px);
+  min-height: 0;
+}
+.libero-companion.grande .libero-companion-personagem { max-width: 100%; }
+.libero-companion-dica {
   margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 650;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  color: #756a7d;
+  font-size: 0.95rem;
+  font-weight: 600;
 }
-.avatar-3d.grande { width: min(76vw, 520px); min-height: min(76vh, 600px); }
-.avatar-3d.grande .avatar-3d-modelo { width: min(64vw, 460px); height: min(64vh, 460px); }
-.avatar-3d.grande .avatar-3d-brilho { top: 8%; width: min(54vw, 390px); height: min(54vw, 390px); filter: blur(65px); }
-.avatar-3d.grande .avatar-3d-rotulo { color: #eee5f2; font-size: 1rem; }
+@keyframes libero-breathe {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-5px) scale(1.012); }
+}
+@keyframes libero-wave {
+  from { height: 5px; }
+  to { height: 17px; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .avatar-3d-brilho { filter: blur(24px); }
+  .libero-companion-personagem img,
+  .libero-companion-ondas i { animation: none !important; }
 }
 .avatar-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .avatar {

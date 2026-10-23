@@ -5,8 +5,9 @@ import { defineConfig } from 'vite';
 
 const projectDir = path.dirname(fileURLToPath(import.meta.url));
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  define: { 'process.env.NODE_ENV': JSON.stringify(mode) },
   resolve: {
     alias: {
       '@': path.resolve(projectDir, 'src'),
@@ -23,4 +24,4 @@ export default defineConfig({
       cssFileName: 'libero-background',
     },
   },
-});
+}));

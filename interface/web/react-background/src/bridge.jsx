@@ -13,7 +13,7 @@ export function mount(container) {
       speed={0.16}
       amplitude={0.08}
       scale={1.45}
-      detail={5}
+      detail={4}
       warp={0.55}
       saturation={0.56}
       brightness={1.08}
@@ -23,7 +23,7 @@ export function mount(container) {
       clickSwirl={false}
       fade={0.18}
       opacity={0.58}
-      resolution={0.38}
+      resolution={0.24}
       className="libero-iridescence-canvas"
     />,
   );

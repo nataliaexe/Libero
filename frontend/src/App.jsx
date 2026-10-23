@@ -19,6 +19,12 @@ export default function App() {
   if (!usuario) return <Login onEntrar={setUsuario} />;
 
   async function sair() {
+    const idosoId = usuario?.idoso_id && usuario.idoso_id !== '*' ? usuario.idoso_id : IDOSO_PADRAO;
+    try {
+      window.sessionStorage.removeItem(`libero:chat:v1:${idosoId}`);
+    } catch (e) {
+      console.error('Could not clear the local chat cache during logout.', e);
+    }
     try {
       await req('/auth/logout', { method: 'POST' });
     } catch {

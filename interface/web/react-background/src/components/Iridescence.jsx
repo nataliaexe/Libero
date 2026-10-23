@@ -265,7 +265,9 @@ const Iridescence = ({
     const swirlData = new Float32Array(MAX_SWIRLS * 4);
     let raf = 0;
     let last = 0;
+    let lastRender = 0;
     let visible = true;
+    let pageVisible = !document.hidden;
     let alive = true;
 
     const resolveColor = s => {
@@ -392,7 +394,12 @@ const Iridescence = ({
 
     const frame = now => {
       raf = 0;
-      if (!alive || !visible) return;
+      if (!alive || !visible || !pageVisible) return;
+      if (lastRender && now - lastRender < 1000 / 24) {
+        raf = requestAnimationFrame(frame);
+        return;
+      }
+      lastRender = now;
       const s = settingsRef.current;
       const dt = last ? Math.min(0.05, (now - last) / 1000) : 1 / 60;
       last = now;
@@ -416,8 +423,22 @@ const Iridescence = ({
     };
 
     const wake = () => {
-      if (raf || !alive || !visible) return;
+      if (raf || !alive || !visible || !pageVisible) return;
       raf = requestAnimationFrame(frame);
+    };
+
+    const onVisibilityChange = () => {
+      pageVisible = !document.hidden;
+      if (!pageVisible) {
+        cancelAnimationFrame(raf);
+        raf = 0;
+        last = 0;
+        lastRender = 0;
+        return;
+      }
+      last = 0;
+      lastRender = 0;
+      wake();
     };
 
     const locate = event => {
@@ -490,6 +511,7 @@ const Iridescence = ({
     visibility.observe(root);
     window.addEventListener('pointermove', onPointerMove, { passive: true });
     window.addEventListener('pointerdown', onPointerDown, { passive: true });
+    document.addEventListener('visibilitychange', onVisibilityChange);
     document.documentElement.addEventListener('pointerleave', onPointerLeave);
     resize();
 
@@ -501,6 +523,7 @@ const Iridescence = ({
       visibility.disconnect();
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerdown', onPointerDown);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
       document.documentElement.removeEventListener('pointerleave', onPointerLeave);
       gl.deleteTexture(fieldTexture);
       gl.deleteBuffer(buffer);

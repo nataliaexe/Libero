@@ -20,12 +20,12 @@ export function setState(estado) {
   roots.get('avatar')?.render(<LiberoAvatar estado={currentState} />);
 }
 
-export function mountChat(container, idosoId, onStateChange) {
+export function mountChat(container, idosoId, onStateChange, usuario) {
   if (!container) return;
   roots.get('chat')?.unmount();
   const root = createRoot(container);
   roots.set('chat', root);
-  root.render(<Chat idosoId={idosoId} setEstado={onStateChange} />);
+  root.render(<Chat idosoId={idosoId} usuario={usuario} setEstado={onStateChange} />);
 }
 
 export function unmount() {

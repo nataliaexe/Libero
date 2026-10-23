@@ -35,12 +35,12 @@ export default function Painel({ usuario, onSair }) {
 
       <div className="conteudo-principal">
         {aba === 'conversa' ? (
-          <Chat idosoId={idosoId} setEstado={setEstado} />
+          <Chat idosoId={idosoId} usuario={usuario} setEstado={setEstado} />
         ) : (
           <Ambiente />
         )}
         <aside className="avatar-lateral">
-          <LiberoAvatar estado={estado} />
+          <LiberoAvatar estado={estado} setEstado={setEstado} />
         </aside>
       </div>
 

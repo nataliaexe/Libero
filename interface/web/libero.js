@@ -4,23 +4,38 @@ let USER=null;let IDOSO_ID='dona-maria';let avatarState='idle';let avatarBundleP
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const date=s=>s?new Date(s).toLocaleString('en-US',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'now';
 const displayUserName=()=>String(USER?.nome||'Family').replace(/\s*\(Filha\)/i,' (Daughter)').replace(/\s*\(Cuidador\)/i,' (Caregiver)');
-function speakResponse(text,language='en'){if(!('speechSynthesis' in window)||!('SpeechSynthesisUtterance' in window)){setAvatarEstado('idle');toast('Voice playback is not available in this browser.');return}const portuguese=String(language).toLowerCase().startsWith('pt'),prefix=portuguese?'pt':'en',locale=portuguese?'pt-BR':'en-US';window.speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(text);utterance.lang=locale;const voices=window.speechSynthesis.getVoices();utterance.voice=voices.find(v=>v.lang.toLowerCase()===locale.toLowerCase())||voices.find(v=>v.lang.toLowerCase().startsWith(prefix))||null;utterance.rate=0.9;utterance.onstart=()=>setAvatarEstado('falando');utterance.onend=()=>setAvatarEstado('idle');utterance.onerror=()=>setAvatarEstado('idle');setAvatarEstado('falando');window.speechSynthesis.speak(utterance)}
+const saudacaoAtual=()=>{const hora=new Date().getHours();return hora<12?'Good morning':hora<18?'Good afternoon':'Good evening'};
+const idiomaDaMensagem=texto=>/[ãõáàâéêíóôúç]/i.test(texto)||/\b(oi|olá|você|obrigado|obrigada|bom dia|boa noite|tudo|não|quero|estou)\b/i.test(texto)?'pt-BR':navigator.language||'en-US';
+function speakResponse(text,language=navigator.language||'pt-BR'){if(!('speechSynthesis' in window)||!('SpeechSynthesisUtterance' in window)){setAvatarEstado('idle');toast('Voice playback is not available in this browser.');return}const portuguese=String(language).toLowerCase().startsWith('pt'),prefix=portuguese?'pt':'en',locale=portuguese?'pt-BR':'en-US';window.speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(text);utterance.lang=locale;const voices=window.speechSynthesis.getVoices();utterance.voice=voices.find(v=>v.lang.toLowerCase()===locale.toLowerCase())||voices.find(v=>v.lang.toLowerCase().startsWith(prefix))||null;utterance.rate=0.9;utterance.onstart=()=>setAvatarEstado('falando');utterance.onend=()=>setAvatarEstado('idle');utterance.onerror=()=>setAvatarEstado('idle');setAvatarEstado('falando');window.speechSynthesis.speak(utterance)}
 function toast(text){const e=document.querySelector('.toast');if(!e)return;e.textContent=text;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),3200)}
 async function req(path,options={}){const r=await fetch(API_URL+path,{credentials:'include',...options,headers:{'Content-Type':'application/json',...(options.headers||{})}});const j=await r.json();if(!r.ok){const e=new Error(j.error||'This action could not be completed.');e.status=r.status;throw e}return j}
 function nav(active){const items=[['dashboard.html','Today'],['alertas.html','Alerts'],['chat.html','Conversations'],['memorias.html','Memories'],['rede.html','Care network'],['perfil.html','Care profile'],['ambiente.html','Environment']];return `<aside class="nav">${items.map(([h,n])=>`<a class="${active===h?'active':''}" href="${h}">${n}</a>`).join('')}<div class="privacy"><strong>Privacy first</strong>Audio is captured while the edge is running and may be sent to the transcription provider. Camera use requires consent; hiding the stream does not stop capture.</div></aside>`}
-function shell(active,content){document.body.innerHTML=`<div class="orb one"></div><div class="orb two"></div><div class="orb three"></div><main class="shell"><header class="topbar"><a class="brand" href="dashboard.html"><img class="brand-icon" src="assets/photon-knot.svg" alt="Libero photon knot"><span><strong>LIBERO</strong><small>Care that stays with you</small></span></a><div class="user-tools"><span id="mic-badge" class="tag warn" style="margin-right:8px" title="Ambient microphone">🎤</span><span>${esc(displayUserName())}</span><div class="avatar">${esc(displayUserName().slice(0,1))}</div><button class="quiet" onclick="abrirModoTV()">Care screen</button><button class="logout" onclick="logout()">Log out</button></div></header><div class="layout">${nav(active)}<section class="page">${content}</section></div></main><div class="toast" aria-live="polite"></div>`;criarAvatarLibero()}
+function shell(active,content){document.body.innerHTML=`<div class="orb one"></div><div class="orb two"></div><div class="orb three"></div><main class="shell"><header class="topbar"><a class="brand" href="dashboard.html"><img class="brand-icon" src="assets/photon-knot.svg" alt="Libero photon knot"><span><strong>LIBERO</strong><small>Care that stays with you</small></span></a><div class="user-tools"><span id="mic-badge" class="tag warn" style="margin-right:8px" title="Ambient microphone">🎤</span><span>${esc(displayUserName())}</span><div class="avatar">${esc(displayUserName().slice(0,1))}</div><button class="quiet" onclick="abrirModoTV()">Care screen</button><button class="logout" onclick="logout()">Log out</button></div></header><div class="layout">${nav(active)}<section class="page">${content}</section></div></main><div class="toast" aria-live="polite"></div>`}
 async function boot(){try{USER=await req('/auth/me');IDOSO_ID=USER.idoso_id&&USER.idoso_id!=='*'?USER.idoso_id:'dona-maria';conectarWebSocket();const page=document.body.dataset.page;const pages={hoje,tasks,chat,memorias,alertas,ambiente,rede,perfil};(pages[page]||hoje)()}catch(e){if(document.body.dataset.page==='hoje')loginScreen();else location.href='dashboard.html'}}
 function abrirModoTV(){const url=new URL('idoso.html?modo=tv',location.href);const popup=window.open(url.href,'libero-care-screen');if(!popup)toast('Allow the new window to open the care screen.')}
 function mountReactBackground(){if(document.getElementById('libero-react-background'))return;const host=document.createElement('div');host.id='libero-react-background';host.setAttribute('aria-hidden','true');document.body.prepend(host);const css=document.createElement('link');css.rel='stylesheet';css.href='assets/react-background/libero-background.css';css.onload=()=>{const script=document.createElement('script');script.src='assets/react-background/libero-background.js';script.onload=()=>window.LiberoBackground?.mount(host);document.head.append(script)};document.head.append(css)}
 function loginScreen(){document.body.innerHTML=`<div class="orb one"></div><div class="orb two"></div><div class="orb three"></div><main class="elder-page" style="max-width:460px;padding-top:12vh"><header class="elder-head"><img class="login-icon" src="assets/photon-knot.svg" alt="Libero photon knot"><div class="eyebrow">CARE THAT STAYS WITH YOU</div><h1>Welcome to your care network.</h1><p class="muted">Sign in to stay informed and present.</p></header><section class="card" style="text-align:left;margin-top:28px"><label class="muted">Email<input id="login-email" class="field" type="email" autocomplete="username" placeholder="you@example.com"></label><br><label class="muted">Password<input id="login-password" class="field" type="password" autocomplete="current-password" placeholder="Your password"></label><p id="login-error" class="muted" style="color:var(--danger)"></p><button class="primary" style="width:100%" onclick="login()">Sign in to Libero</button></section></main>`}async function login(){const email=document.querySelector('#login-email').value.trim(),senha=document.querySelector('#login-password').value,err=document.querySelector('#login-error');if(!email||!senha){err.textContent='Enter your email and password.';return}try{USER=await req('/auth/login',{method:'POST',body:JSON.stringify({email,senha})});const destino=sessionStorage.getItem('libero-return-to')||'dashboard.html';sessionStorage.removeItem('libero-return-to');location.href=destino}catch(e){err.textContent=e.message}}
-async function logout(){try{await req('/auth/logout',{method:'POST'})}catch(e){}location.href='dashboard.html'}
-async function hoje(){shell('dashboard.html',`<div class="hero"><div><div class="eyebrow">Family overview</div><h1>Good morning, ${esc(localStorage.getItem('libero-preferred-name')||'Maria')}.</h1><p>A calm view of the day, so you can care with more presence and less worry.</p></div><a class="primary" href="chat.html">View conversation</a></div><section class="status-card"><div class="eyebrow">Right now</div><h2 id="current-state">Monitoring status not verified.</h2><div class="status-row"><span class="dot"></span><span id="state-detail">History does not confirm that sensors are active.</span></div></section><section class="grid stats"><div class="card"><h3>Recorded interactions</h3><div class="metric" id="stat-interactions">—</div><p class="muted">conversation and support records</p></div><div class="card"><h3>Saved memories</h3><div class="metric" id="stat-memories">—</div><p class="muted">stories that become a legacy</p></div><div class="card"><h3>Recorded alerts</h3><div class="metric" id="stat-alerts">—</div><p class="muted">events that needed attention</p></div></section><section class="card" style="margin-top:16px"><div class="section-title"><h2>Safety &amp; sound events</h2><a class="muted" href="ambiente.html">View environment</a></div><div class="grid stats" id="sound-events"><div class="card"><h3>Falls</h3><div class="metric" id="ev-quedas">0</div></div><div class="card"><h3>Shouts</h3><div class="metric" id="ev-gritos">0</div></div><div class="card"><h3>Movements</h3><div class="metric" id="ev-movimentos">0</div></div><div class="card"><h3>Loud sounds</h3><div class="metric" id="ev-sons">0</div></div></div></section><div class="grid split"><section class="card"><div class="section-title"><h2>Recent activity</h2><a class="muted" href="chat.html">View conversations</a></div><div class="timeline" id="timeline"><div class="empty">Loading today's activity.</div></div></section><section class="card"><div class="section-title"><h2>Next care task</h2><a class="muted" href="tasks.html">View routine</a></div><div id="next-care"><div class="empty">Loading routine.</div></div></section></div>`);try{const [messages,tasks]=await Promise.all([req(`/chat/${IDOSO_ID}/mensagens?limite=8`),req(`/tasks/${IDOSO_ID}`)]);const s=messages.estatisticas||{};document.querySelector('#stat-interactions').textContent=s.total_mensagens||0;document.querySelector('#stat-memories').textContent=s.total_memorias||0;document.querySelector('#stat-alerts').textContent=s.total_emergencias||0;const entries=(messages.mensagens||[]).slice(0,5);document.querySelector('#timeline').innerHTML=entries.length?entries.map(m=>`<div class="timeline-item"><span class="time">${date(m.timestamp).split(', ').pop()}</span><div><span class="item-title">${m.autor==='libero'?'Libero responded to a conversation':m.autor==='idoso'?'A conversation was recorded':'Family care'}</span><br><span class="muted">${esc(m.texto).slice(0,108)}</span></div></div>`).join(''):'<div class="empty">No moments have been recorded today.</div>';const next=(tasks.tasks||[]).filter(t=>t.status==='pendente').sort((a,b)=>a.hora.localeCompare(b.hora))[0];document.querySelector('#next-care').innerHTML=next?`<div class="notice"><strong>${esc(next.hora)} · ${esc(next.titulo)}</strong><br>This item is in the routine; automatic reminders are not connected yet.</div>`:'<div class="empty">No pending care tasks.</div>';try{const ev=await req(`/eventos/${IDOSO_ID}/resumo`);const r=ev.resumo||{};const q=document.querySelector('#ev-quedas');if(q)q.textContent=r.quedas||0;const g=document.querySelector('#ev-gritos');if(g)g.textContent=r.gritos||0;const m=document.querySelector('#ev-movimentos');if(m)m.textContent=r.movimentos||0;const s=document.querySelector('#ev-sons');if(s)s.textContent=r.sons_altos||0}catch(e){}}catch(e){toast(e.message)}}
+async function logout(){try{sessionStorage.removeItem(`libero:chat:v1:${IDOSO_ID}`)}catch(e){console.error('Could not clear the local chat cache during logout.',e)}try{await req('/auth/logout',{method:'POST'})}catch(e){}location.href='dashboard.html'}
+async function hoje(){shell('dashboard.html',`<div class="hero"><div><div class="eyebrow">Family overview</div><h1>${saudacaoAtual()}, ${esc(localStorage.getItem('libero-preferred-name')||'Maria')}.</h1><p>A calm view of the day, so you can care with more presence and less worry.</p></div><a class="primary" href="chat.html">View conversation</a></div><section class="status-card"><div class="eyebrow">Right now</div><h2 id="current-state">Monitoring status not verified.</h2><div class="status-row"><span class="dot"></span><span id="state-detail">History does not confirm that sensors are active.</span></div></section><section class="grid stats"><div class="card"><h3>Recorded interactions</h3><div class="metric" id="stat-interactions">—</div><p class="muted">conversation and support records</p></div><div class="card"><h3>Saved memories</h3><div class="metric" id="stat-memories">—</div><p class="muted">stories that become a legacy</p></div><div class="card"><h3>Recorded alerts</h3><div class="metric" id="stat-alerts">—</div><p class="muted">events that needed attention</p></div></section><section class="card" style="margin-top:16px"><div class="section-title"><h2>Safety &amp; sound events</h2><a class="muted" href="ambiente.html">View environment</a></div><div class="grid stats" id="sound-events"><div class="card"><h3>Falls</h3><div class="metric" id="ev-quedas">0</div></div><div class="card"><h3>Shouts</h3><div class="metric" id="ev-gritos">0</div></div><div class="card"><h3>Movements</h3><div class="metric" id="ev-movimentos">0</div></div><div class="card"><h3>Loud sounds</h3><div class="metric" id="ev-sons">0</div></div></div></section><div class="grid split"><section class="card"><div class="section-title"><h2>Recent activity</h2><a class="muted" href="chat.html">View conversations</a></div><div class="timeline" id="timeline"><div class="empty">Loading today's activity.</div></div></section><section class="card"><div class="section-title"><h2>Next care task</h2><a class="muted" href="tasks.html">View routine</a></div><div id="next-care"><div class="empty">Loading routine.</div></div></section></div>`);try{const [messages,tasks]=await Promise.all([req(`/chat/${IDOSO_ID}/mensagens?limite=8`),req(`/tasks/${IDOSO_ID}`)]);const s=messages.estatisticas||{};document.querySelector('#stat-interactions').textContent=s.total_mensagens||0;document.querySelector('#stat-memories').textContent=s.total_memorias||0;document.querySelector('#stat-alerts').textContent=s.total_emergencias||0;const entries=(messages.mensagens||[]).slice(0,5);document.querySelector('#timeline').innerHTML=entries.length?entries.map(m=>`<div class="timeline-item"><span class="time">${date(m.timestamp).split(', ').pop()}</span><div><span class="item-title">${m.autor==='libero'?'Libero responded to a conversation':m.autor==='idoso'?'A conversation was recorded':'Family care'}</span><br><span class="muted">${esc(m.texto).slice(0,108)}</span></div></div>`).join(''):'<div class="empty">No moments have been recorded today.</div>';const next=(tasks.tasks||[]).filter(t=>t.status==='pendente').sort((a,b)=>a.hora.localeCompare(b.hora))[0];document.querySelector('#next-care').innerHTML=next?`<div class="notice"><strong>${esc(next.hora)} · ${esc(next.titulo)}</strong><br>This item is in the routine; automatic reminders are not connected yet.</div>`:'<div class="empty">No pending care tasks.</div>';try{const ev=await req(`/eventos/${IDOSO_ID}/resumo`);const r=ev.resumo||{};const q=document.querySelector('#ev-quedas');if(q)q.textContent=r.quedas||0;const g=document.querySelector('#ev-gritos');if(g)g.textContent=r.gritos||0;const m=document.querySelector('#ev-movimentos');if(m)m.textContent=r.movimentos||0;const s=document.querySelector('#ev-sons');if(s)s.textContent=r.sons_altos||0}catch(e){}}catch(e){toast(e.message)}}
 async function tasks(){shell('tasks.html',`<div class="hero"><div><div class="eyebrow">Care routine</div><h1>A lighter day.</h1><p>Medication, meals, water, and small rituals in one place.</p></div></div><section class="card"><div class="form-grid"><input id="task-title" class="field" placeholder="e.g. Blood pressure medication"><input id="task-hour" class="field" type="time" value="08:00"><select id="task-type" class="field"><option value="remedio">Medication</option><option value="agua">Water</option><option value="refeicao">Meal</option><option value="atividade">Activity</option><option value="outro">Other</option></select><button class="primary" onclick="addTask()">Add</button></div></section><div class="section-title"><h2>Today</h2><span class="muted" id="task-summary"></span></div><section class="card"><div id="task-list"><div class="empty">Loading routine.</div></div></section>`);loadTasks()}
 async function loadTasks(){try{const {tasks=[]}=await req(`/tasks/${IDOSO_ID}`);tasks.sort((a,b)=>a.hora.localeCompare(b.hora));document.querySelector('#task-summary').textContent=`${tasks.filter(t=>t.status==='feito').length} of ${tasks.length} completed`;document.querySelector('#task-list').innerHTML=tasks.length?tasks.map(t=>`<div class="task-row ${t.status==='feito'?'done':''}"><span class="hour">${esc(t.hora||'—')}</span><div><strong>${esc(t.titulo)}</strong><small>${esc(({remedio:'Medication',agua:'Water',refeicao:'Meal',atividade:'Activity',outro:'Other'})[t.tipo]||t.tipo)}</small></div><span class="tag ${t.status==='feito'?'ok':t.status==='ignorado'?'alert':'warn'}">${t.status==='feito'?'Completed':t.status==='ignorado'?'Skipped':'Pending'}</span><button class="quiet" onclick="toggleTask('${esc(t.id)}','${t.status}')">${t.status==='feito'?'Reopen':'Complete'}</button></div>`).join(''):'<div class="empty">Add a care task to get started.</div>'}catch(e){toast(e.message)}}
 async function addTask(){const titulo=document.querySelector('#task-title').value.trim();if(!titulo)return toast('Enter a care task name.');try{await req(`/tasks/${IDOSO_ID}`,{method:'POST',body:JSON.stringify({titulo,hora:document.querySelector('#task-hour').value,tipo:document.querySelector('#task-type').value})});document.querySelector('#task-title').value='';toast('Care task added to the routine.');loadTasks()}catch(e){toast(e.message)}}async function toggleTask(id,status){try{await req(`/tasks/${IDOSO_ID}/${id}`,{method:'PUT',body:JSON.stringify({status:status==='feito'?'pendente':'feito'})});loadTasks()}catch(e){toast(e.message)}}
 async function chat(){
-  shell('chat.html',`<div class="hero"><div><div class="eyebrow">Caring conversations</div><h1>Stay informed without intruding.</h1><p>Send a message to Libero and follow the conversation here.</p></div><button class="quiet" onclick="abrirModoTV()">Open care screen</button></div><div id="chat-container"><section class="card"><div class="empty">Loading conversations…</div></section></div>`);
-  loadChat();
+  shell('chat.html',`<div class="hero"><div><div class="eyebrow">Caring conversations</div><h1>Stay informed without intruding.</h1><p>Send a message to Libero and follow the conversation here.</p></div><button class="quiet" onclick="abrirModoTV()">Open care screen</button></div><div id="chat-react-root"><section class="card"><div class="empty">Loading conversations…</div></section></div>`);
+  clearInterval(window._chatRefreshInterval);
+  try {
+    const bridge=await carregarAvatarBundle();
+    const container=document.querySelector('#chat-react-root');
+    if(container)bridge.mountChat(container,IDOSO_ID,setAvatarEstado,USER);
+  } catch(e) {
+    const container=document.querySelector('#chat-react-root');
+    if(container)container.id='chat-container';
+    toast('Using the compatible chat view: '+e.message);
+    loadChat();
+    window._chatRefreshInterval=setInterval(()=>{
+      if(document.querySelector('#chat-container')&&!document.hidden)loadChat(true);
+    },15000);
+  }
 }
 async function memorias(){
   shell('memorias.html',`<div class="hero"><div><div class="eyebrow">Family memories</div><h1>Stories that stay close.</h1><p>Personal stories saved from conversations and available to Libero for later context.</p></div></div><section id="memory-list" class="grid"><div class="empty">Loading saved stories.</div></section>`);
@@ -67,19 +82,24 @@ async function bootElder(){
   }
 }
 function elder(){
-  document.body.innerHTML=`<main class="care-screen"><header class="care-screen-top"><a href="dashboard.html" class="care-screen-brand">LIBERO</a><span id="care-screen-state">Estou aqui</span></header><section class="care-screen-center"><div id="care-screen-avatar"></div></section><footer class="care-screen-controls"><div class="care-screen-info"><strong>Libero Care Screen</strong><p>Companion mode for Maria • Connected</p></div><div class="care-screen-buttons"><button class="primary" onclick="ativarTelaCheia()">Full Screen</button><button class="quiet" onclick="sairTelaCheia()">Exit</button><button class="quiet" onclick="location.href='dashboard.html'">Back to Dashboard</button></div></footer></main>`;
-  // Avatar 2D simples
-  updateCareScreenAvatar();
+  document.body.innerHTML=`<main class="care-screen"><header class="care-screen-top"><a href="dashboard.html" class="care-screen-brand" aria-label="Libero home"><img src="assets/photon-knot.svg" alt="Libero"></a></header><section class="care-screen-center"><div id="care-screen-avatar"><button type="button" class="care-character" data-state="idle" onclick="cumprimentarCompanion()" aria-label="Toque para ouvir uma mensagem do Libero"><span class="care-character-aura" aria-hidden="true"></span><img src="assets/companion-avatar.svg" alt=""><span class="care-character-ondas" aria-hidden="true"><i></i><i></i><i></i></span></button><p class="care-character-prompt">Toque no Libero para conversar</p></div></section><footer class="care-screen-controls"><div class="care-screen-buttons"><button class="primary" onclick="ativarTelaCheia()">Full Screen</button><button class="quiet" onclick="sairTelaCheia()">Exit</button><button class="quiet" onclick="location.href='dashboard.html'">Back to Dashboard</button></div></footer></main>`;
   carregarMensagensTela(true);
   if(window._careScreenInterval)clearInterval(window._careScreenInterval);
-  window._careScreenInterval=setInterval(()=>carregarMensagensTela(false),5000);
+  window._careScreenInterval=setInterval(()=>{if(!document.hidden)carregarMensagensTela(false)},15000);
 }
 
 function updateCareScreenAvatar(){
-  const container=document.querySelector('#care-screen-avatar');
-  if(!container)return;
-  const label=({idle:'Estou aqui',ouvindo:'Ouvindo você',pensando:'Pensando',falando:'Falando'})[avatarState];
-  container.innerHTML=`<div class="avatar-wrap grande"><model-viewer src="/woman.glb" alt="Libero Avatar" autoplay disable-zoom interaction-prompt="none" shadow-intensity="0.5" exposure="1" camera-controls style="width:100%;height:100%;background:transparent;outline:none"></model-viewer><div class="avatar-rotulo">${label}</div></div>`;
+  document.querySelector('#care-screen-avatar .care-character')?.setAttribute('data-state',avatarState);
+}
+function cumprimentarCompanion(){
+  if(!('speechSynthesis' in window)||!('SpeechSynthesisUtterance' in window)){toast('A fala não está disponível neste navegador.');return}
+  const fala=new SpeechSynthesisUtterance('Oi, que bom ter você aqui. Quer conversar comigo?');
+  fala.lang='pt-BR';
+  fala.onstart=()=>setAvatarEstado('falando',false);
+  fala.onend=()=>setAvatarEstado('idle',false);
+  fala.onerror=()=>setAvatarEstado('idle',false);
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.speak(fala);
 }
 async function carregarMensagensTela(inicial=false){
   try {
@@ -95,7 +115,7 @@ async function carregarMensagensTela(inicial=false){
       if('speechSynthesis' in window&&'SpeechSynthesisUtterance' in window){
         window.speechSynthesis.cancel();
         const fala=new SpeechSynthesisUtterance(atual.texto);
-        fala.lang='en-US';
+        fala.lang=idiomaDaMensagem(atual.texto);
         fala.onend=()=>setAvatarEstado('idle');
         fala.onerror=()=>setAvatarEstado('idle');
         window.speechSynthesis.speak(fala);
@@ -132,14 +152,57 @@ document.addEventListener('fullscreenchange',()=>document.querySelector('.care-s
 
 let chatMessages = [];
 let chatScrollPosition = 0;
+let chatOffset = 50;
+let chatHasOlder = false;
+let chatError = '';
+let chatLoadingOlder = false;
 
-async function loadChat() {
+async function loadChat(silent = false) {
+  if (chatLoadingOlder) return;
   try {
     const dados = await req(`/chat/${IDOSO_ID}/mensagens?limite=50`);
-    chatMessages = [...(dados.mensagens || [])].reverse();
-    renderChat();
+    const novas = [...(dados.mensagens || [])].reverse();
+    const haviaErro = Boolean(chatError);
+    const mensagensAnteriores = new Set(chatMessages.map(m => m.id));
+    const adicionadas = novas.filter(m => !mensagensAnteriores.has(m.id));
+    if (chatMessages.length) chatOffset += adicionadas.length;
+    chatMessages = [...new Map([...chatMessages, ...novas].map(m => [m.id, m])).values()]
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    chatHasOlder = novas.length === 50;
+    chatError = '';
+    if (adicionadas.length || !silent || haviaErro) renderChat();
   } catch (e) {
-    toast('Could not load conversations: ' + e.message);
+    const erroAnterior = chatError;
+    chatError = 'Could not load conversations: ' + e.message;
+    if (!silent || !chatMessages.length || chatError !== erroAnterior) renderChat();
+  }
+}
+
+async function loadOlderChat() {
+  const button = document.querySelector('#chat-load-older');
+  if (!button || button.disabled || chatLoadingOlder || !chatHasOlder) return;
+  const list = document.querySelector('.chat-messages');
+  const scrollTop = list?.scrollTop || 0;
+  const scrollHeight = list?.scrollHeight || 0;
+  chatLoadingOlder = true;
+  button.disabled = true;
+  button.textContent = 'Loading…';
+  try {
+    const dados = await req(`/chat/${IDOSO_ID}/mensagens?limite=50&offset=${chatOffset}`);
+    const anteriores = [...(dados.mensagens || [])].reverse();
+    chatMessages = [...new Map([...chatMessages, ...anteriores].map(m => [m.id, m])).values()]
+      .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    chatOffset += anteriores.length;
+    chatHasOlder = anteriores.length === 50;
+    chatError = '';
+    renderChat();
+    const novaLista = document.querySelector('.chat-messages');
+    if (novaLista) novaLista.scrollTop = scrollTop + novaLista.scrollHeight - scrollHeight;
+  } catch (e) {
+    chatError = 'Could not load older messages: ' + e.message;
+    renderChat();
+  } finally {
+    chatLoadingOlder = false;
   }
 }
 
@@ -162,14 +225,16 @@ function renderChat() {
   const container = document.querySelector('#chat-container');
   if (!container) return;
 
-  // Salvar posição do scroll se já existe
   const messagesDiv = container.querySelector('.chat-messages');
-  if (messagesDiv) {
-    chatScrollPosition = messagesDiv.scrollTop;
-  }
+  const wasNearBottom = !messagesDiv ||
+    messagesDiv.scrollHeight - messagesDiv.scrollTop - messagesDiv.clientHeight < 80;
+  const previousInput = container.querySelector('#chat-input');
+  const previousText = previousInput?.value || '';
+  const inputHadFocus = document.activeElement === previousInput;
+  if (messagesDiv) chatScrollPosition = messagesDiv.scrollTop;
 
   if (chatMessages.length === 0) {
-    container.innerHTML = `<section class="card"><div class="empty">No conversations yet. Send a message to start talking with Libero.</div></section>`;
+    container.innerHTML = `<section class="card">${chatError ? `<p class="chat-load-error" role="alert">${esc(chatError)} <button class="quiet" type="button" onclick="loadChat()">Try again</button></p>` : ''}<div class="chat-messages"><div class="empty">${chatError ? 'Your saved conversation is unavailable right now.' : 'No conversations yet. Send a message to start talking with Libero.'}</div></div><form class="chat-composer" onsubmit="sendChatMessage(event)"><input type="text" id="chat-input" class="field" placeholder="Write a message to Libero..." maxlength="2000" /><button type="submit" class="primary" id="chat-send">Send</button></form></section>`;
     return;
   }
 
@@ -188,11 +253,14 @@ function renderChat() {
   Object.keys(groupedMessages).forEach(dateKey => {
     html += `<div class="chat-day-divider">${dateKey}</div>`;
     groupedMessages[dateKey].forEach(m => {
+      const nome = m.autor === 'idoso'
+        ? localStorage.getItem('libero-preferred-name') || 'Maria'
+        : m.autor === 'libero' ? 'Libero' : displayUserName();
       html += `
         <div class="chat-bubble ${m.autor === 'idoso' ? 'idoso' : m.autor === 'libero' ? 'libero' : 'cuidador'}">
-          <div class="chat-avatar">${m.autor === 'idoso' ? 'M' : m.autor === 'libero' ? 'L' : 'Y'}</div>
+          <div class="chat-avatar">${esc(nome.slice(0, 1).toUpperCase())}</div>
           <div class="chat-content">
-            <div class="chat-name">${m.autor === 'idoso' ? 'Maria' : m.autor === 'libero' ? 'Libero' : 'You'}</div>
+            <div class="chat-name">${esc(nome)}</div>
             <div class="chat-text">${esc(m.texto)}</div>
           </div>
         </div>
@@ -202,9 +270,11 @@ function renderChat() {
 
   container.innerHTML = `
     <section class="card">
+      ${chatError ? `<p class="chat-load-error" role="alert">${esc(chatError)} <button class="quiet" type="button" onclick="loadChat()">Try again</button></p>` : ''}
+      ${chatHasOlder ? '<button class="quiet chat-load-older" id="chat-load-older" type="button" onclick="loadOlderChat()">Load older messages</button>' : ''}
       <div class="chat-messages">${html}</div>
       <form class="chat-composer" onsubmit="sendChatMessage(event)">
-        <input type="text" id="chat-input" class="field" placeholder="Write a message to Libero..." maxlength="2000" />
+        <input type="text" id="chat-input" class="field" placeholder="Write a message to Libero..." maxlength="2000" value="${esc(previousText)}" />
         <button type="submit" class="primary" id="chat-send">Send</button>
       </form>
     </section>
@@ -213,11 +283,14 @@ function renderChat() {
   // Restaurar posição do scroll ou ir para o fundo se for primeira carga
   const newMessagesDiv = container.querySelector('.chat-messages');
   if (newMessagesDiv) {
-    if (chatScrollPosition > 0) {
-      newMessagesDiv.scrollTop = chatScrollPosition;
-    } else {
-      newMessagesDiv.scrollTop = newMessagesDiv.scrollHeight;
-    }
+    newMessagesDiv.scrollTop = wasNearBottom
+      ? newMessagesDiv.scrollHeight
+      : chatScrollPosition;
+  }
+  const newInput = container.querySelector('#chat-input');
+  if (newInput && inputHadFocus) {
+    newInput.focus();
+    newInput.setSelectionRange(previousText.length, previousText.length);
   }
 }
 
@@ -239,7 +312,7 @@ async function sendChatMessage(e) {
     });
     input.value = '';
     await loadChat();
-    speakResponse(resposta.resposta);
+    speakResponse(resposta.resposta, resposta.idioma || idiomaDaMensagem(texto));
   } catch (err) {
     toast('Could not send message: ' + err.message);
   } finally {
@@ -326,7 +399,9 @@ async function atualizarBadgeMic() {
 }
 
 // Refresh every 5 seconds
-setInterval(atualizarBadgeMic, 5000);
+setInterval(()=>{
+  if(!document.hidden&&document.getElementById('mic-badge'))atualizarBadgeMic();
+},30000);
 
 // ============================================================
 // REAL-TIME NOTIFICATIONS (WebSocket)
@@ -427,14 +502,6 @@ function pedirPermissaoNotificacao() {
 // ============================================================
 // AVATAR DO LIBERO (VISUAL)
 // ============================================================
-function criarAvatarLibero() {
-  if (document.querySelector('.libero-avatar-container')) return;
-  document.body.insertAdjacentHTML('beforeend', '<div class="libero-avatar-container"><div id="libero-avatar-root"></div></div>');
-  const container=document.querySelector('#libero-avatar-root');
-  // Avatar 3D com model-viewer
-  container.innerHTML=`<div class="avatar-wrap"><model-viewer src="/woman.glb" alt="Libero Avatar" autoplay disable-zoom interaction-prompt="none" shadow-intensity="0.5" exposure="1" style="width:100%;height:100%;background:transparent;outline:none"></model-viewer><div class="avatar-rotulo">${avatarState}</div></div>`;
-}
-
 function carregarAvatarBundle() {
   if (window.LiberoAvatar) return Promise.resolve(window.LiberoAvatar);
   if (avatarBundlePromise) return avatarBundlePromise;
@@ -453,8 +520,6 @@ function setAvatarEstado(estado,anunciar=true) {
   const mudou=avatarState!==estado;
   avatarState=estado;
   window.LiberoAvatar?.setState(estado);
-  const label=document.querySelector('#care-screen-state');
-  if(label)label.textContent=({idle:'Estou aqui',ouvindo:'Ouvindo você',pensando:'Pensando',falando:'Falando'})[estado];
   updateCareScreenAvatar();
   if(anunciar&&mudou&&wsNotif?.readyState===WebSocket.OPEN){
     wsNotif.send(JSON.stringify({tipo:'libero_estado_avatar',estado}));
